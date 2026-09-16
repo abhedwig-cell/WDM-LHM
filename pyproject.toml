@@ -12,6 +12,7 @@ dependencies = ["numpy>=1.24", "pandas>=2.0", "scipy>=1.10", "matplotlib>=3.7", 
 [project.scripts]
 wdm-lhm = "wdm_lhm.cli:main"
 wdm-lhm-regis-probe = "wdm_lhm.regis_probe_cli:main"
+wdm-lhm-remote-zip-index = "wdm_lhm.remote_zip_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
