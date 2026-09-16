@@ -5,7 +5,10 @@ on:
     paths:
       - "src/wdm_lhm/regis_probe.py"
       - "src/wdm_lhm/regis_probe_cli.py"
+      - "src/wdm_lhm/remote_zip.py"
+      - "src/wdm_lhm/remote_zip_cli.py"
       - "tests/test_regis_probe.py"
+      - "tests/test_remote_zip.py"
       - "docs/qualification/STAGE_B_REGIS_ACQUISITION.md"
       - ".github/workflows/regis-probe.yml"
       - "pyproject.toml"
@@ -53,9 +56,11 @@ jobs:
           wdm-lhm-regis-probe output/regis_probe \
             --atom-url "${{ steps.params.outputs.atom_url }}" \
             --max-depth "${{ steps.params.outputs.max_depth }}"
-      - name: Validate acquisition evidence
+      - name: Validate acquisition evidence and select archive
+        id: archive
+        shell: bash
         run: |
-          python - <<'PY'
+          python - <<'PY' > /tmp/archive_url.txt
           import json
           from pathlib import Path
 
@@ -63,19 +68,52 @@ jobs:
           if not p.exists():
               raise SystemExit("Missing REGIS probe manifest")
           m = json.loads(p.read_text(encoding="utf-8"))
-          print(json.dumps(m, indent=2))
+          print(json.dumps(m, indent=2), file=__import__('sys').stderr)
           if m["counts"]["feeds"] < 1:
               raise SystemExit("No REGIS ATOM feeds parsed")
-          if m["counts"]["download_candidates"] < 1:
-              raise SystemExit("No REGIS download candidates discovered")
-          if any(d["href"].startswith("file:") for d in m["downloads"]):
-              raise SystemExit("Unexpected non-public download URI")
+          if m["counts"]["download_candidates"] != 1:
+              raise SystemExit(f"Expected exactly one REGIS archive candidate, got {m['counts']['download_candidates']}")
+          d = m["downloads"][0]
+          if not d["href"].startswith("https://service.pdok.nl/"):
+              raise SystemExit(f"Unexpected REGIS archive host: {d['href']}")
+          if not d["href"].lower().endswith(".zip"):
+              raise SystemExit(f"Expected ZIP delivery: {d['href']}")
+          print(d["href"])
+          PY
+          echo "archive_url=$(cat /tmp/archive_url.txt)" >> "$GITHUB_OUTPUT"
+      - name: Index remote REGIS ZIP by HTTP ranges
+        run: |
+          wdm-lhm-remote-zip-index \
+            "${{ steps.archive.outputs.archive_url }}" \
+            output/regis_zip_index
+      - name: Validate remote ZIP structure
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path("output/regis_zip_index/remote_zip_index.json")
+          if not p.exists():
+              raise SystemExit("Missing remote ZIP index")
+          m = json.loads(p.read_text(encoding="utf-8"))
+          print(json.dumps({
+              "remote": m["remote"],
+              "eocd": m["eocd"],
+              "counts": m["counts"],
+              "first_entries": m["entries"][:20],
+          }, indent=2))
+          if m["counts"]["files"] < 1:
+              raise SystemExit("REGIS archive index contains no files")
+          if m["remote"]["content_length_bytes"] < 1:
+              raise SystemExit("Missing REGIS archive size")
           PY
       - name: Upload reproducible acquisition evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: regis-probe-${{ github.run_id }}
-          path: output/regis_probe/
+          path: |
+            output/regis_probe/
+            output/regis_zip_index/
           if-no-files-found: warn
           retention-days: 14
