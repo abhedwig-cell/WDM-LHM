@@ -1,0 +1,95 @@
+name: Freatic prescreen live smoke
+
+on:
+  pull_request:
+    paths:
+      - "src/wdm_lhm/freatic_screening.py"
+      - "src/wdm_lhm/bro_ingest.py"
+      - "src/wdm_lhm/cli.py"
+      - "tests/test_freatic_screening.py"
+      - "docs/qualification/FREATIC_SCREENING_*"
+      - ".github/workflows/freatic-smoke.yml"
+      - "pyproject.toml"
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "CRS84 bbox minlon,minlat,maxlon,maxlat"
+        required: true
+        default: "5.60,51.94,5.75,52.02"
+      max_series:
+        description: "Maximum GLD series to download"
+        required: true
+        default: "25"
+
+permissions:
+  contents: read
+
+jobs:
+  freatic-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Resolve run parameters
+        id: params
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "bbox=${{ inputs.bbox }}" >> "$GITHUB_OUTPUT"
+            echo "max_series=${{ inputs.max_series }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "bbox=5.60,51.94,5.75,52.02" >> "$GITHUB_OUTPUT"
+            echo "max_series=10" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Live BRO/PDOK ingest
+        run: |
+          wdm-lhm bro-ingest output/freatic_smoke/bro \
+            --bbox "${{ steps.params.outputs.bbox }}" \
+            --min-observations 100 \
+            --min-span-days 730 \
+            --max-series "${{ steps.params.outputs.max_series }}" \
+            --no-preliminary
+      - name: Run conservative freatic pre-screen
+        run: |
+          wdm-lhm freatic-prescreen \
+            output/freatic_smoke/bro/bundle/stations.csv \
+            output/freatic_smoke/bro/bundle/observations.csv \
+            output/freatic_smoke/screen \
+            --min-observations 100 \
+            --min-span-days 730
+      - name: Validate evidence contract
+        run: |
+          python - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+
+          manifest = json.loads(Path("output/freatic_smoke/screen/freatic_prescreen_manifest.json").read_text())
+          screen = pd.read_csv("output/freatic_smoke/screen/freatic_prescreen.csv")
+          allowed = {"CANDIDATE_FREATIC", "REVIEW_DEEP_OR_AMBIGUOUS", "INSUFFICIENT_DATA", "NOT_USABLE_SERIES"}
+          print(json.dumps(manifest, indent=2))
+          print(screen[["station_id", "screen_bottom_depth_m", "prescreen_verdict", "reason_codes"]].to_string(index=False))
+          if screen.empty:
+              raise SystemExit("No tubes reached the Stage-A screen")
+          invalid = set(screen["prescreen_verdict"].dropna()) - allowed
+          if invalid:
+              raise SystemExit(f"Unexpected verdicts: {sorted(invalid)}")
+          if sum(manifest["counts"].values()) != len(screen):
+              raise SystemExit("Manifest verdict counts do not match evidence rows")
+          PY
+      - name: Upload reproducible TS07 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: freatic-smoke-${{ github.run_id }}
+          path: output/freatic_smoke/
+          if-no-files-found: warn
+          retention-days: 14
