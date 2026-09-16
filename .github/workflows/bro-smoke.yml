@@ -1,0 +1,68 @@
+name: BRO live smoke
+
+on:
+  pull_request:
+    paths:
+      - "src/wdm_lhm/bro_ingest.py"
+      - "src/wdm_lhm/cli.py"
+      - "pyproject.toml"
+      - ".github/workflows/bro-smoke.yml"
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "CRS84 bbox minlon,minlat,maxlon,maxlat"
+        required: true
+        default: "5.60,51.94,5.75,52.02"
+      max_series:
+        description: "Maximum GLD series to download"
+        required: true
+        default: "25"
+
+permissions:
+  contents: read
+
+jobs:
+  bro-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Resolve run parameters
+        id: params
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "bbox=${{ inputs.bbox }}" >> "$GITHUB_OUTPUT"
+            echo "max_series=${{ inputs.max_series }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "bbox=5.60,51.94,5.75,52.02" >> "$GITHUB_OUTPUT"
+            echo "max_series=2" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Live BRO/PDOK ingest
+        run: |
+          wdm-lhm bro-ingest output/bro_smoke \
+            --bbox "${{ steps.params.outputs.bbox }}" \
+            --min-observations 30 \
+            --min-span-days 365 \
+            --max-series "${{ steps.params.outputs.max_series }}"
+      - name: Show manifest
+        if: always()
+        run: |
+          if [[ -f output/bro_smoke/manifest.json ]]; then cat output/bro_smoke/manifest.json; fi
+          find output/bro_smoke -maxdepth 3 -type f -print 2>/dev/null || true
+      - name: Upload reproducible ingest artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bro-smoke-${{ github.run_id }}
+          path: output/bro_smoke/
+          if-no-files-found: warn
+          retention-days: 14
