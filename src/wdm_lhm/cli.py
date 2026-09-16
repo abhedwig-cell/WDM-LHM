@@ -64,7 +64,12 @@ def main() -> None:
     p_bro = sub.add_parser("bro-ingest", help="Build a real observation bundle from public BRO/PDOK services")
     p_bro.add_argument("output")
     p_bro.add_argument("--bbox", required=True, help="CRS84 bbox minlon,minlat,maxlon,maxlat")
-    p_bro.add_argument("--min-observations", type=int, default=30)
+    p_bro.add_argument(
+        "--min-catalog-observations", "--min-observations", dest="min_catalog_observations",
+        type=int, default=1,
+        help=("Minimum PDOK GLD Observatie entities before download. This is not the number of individual "
+              "time-value measurements; --min-observations is retained as a backwards-compatible alias."),
+    )
     p_bro.add_argument("--min-span-days", type=int, default=365)
     p_bro.add_argument("--max-series", type=int)
     p_bro.add_argument("--no-preliminary", action="store_true")
@@ -76,7 +81,8 @@ def main() -> None:
     p_freatic.add_argument("stations")
     p_freatic.add_argument("observations")
     p_freatic.add_argument("output")
-    p_freatic.add_argument("--min-observations", type=int, default=100)
+    p_freatic.add_argument("--min-observations", type=int, default=100,
+                           help="Minimum number of parsed individual GLD time-value measurements")
     p_freatic.add_argument("--min-span-days", type=int, default=730)
     p_freatic.add_argument("--legacy-max-screen-bottom-depth-m", type=float, default=5.0)
     p_freatic.add_argument("--allow-non-fully-assessed-candidate", action="store_true")
@@ -124,7 +130,7 @@ def main() -> None:
         if len(bbox) != 4:
             raise SystemExit("--bbox must contain minlon,minlat,maxlon,maxlat")
         cfg = BROIngestConfig(
-            bbox_crs84=bbox, min_observations=args.min_observations, min_span_days=args.min_span_days,
+            bbox_crs84=bbox, min_observations=args.min_catalog_observations, min_span_days=args.min_span_days,
             allow_preliminary=not args.no_preliminary, include_unknown_series=args.include_unknown_series,
             only_tubes_in_use=args.only_tubes_in_use, max_series=args.max_series,
         )
