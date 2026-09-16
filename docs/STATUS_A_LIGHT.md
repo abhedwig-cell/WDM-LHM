@@ -35,7 +35,7 @@ A code path is not admitted merely because it runs. It must be traceable to the 
 | `ADMITTED_BASELINE` | Method and evidence are sufficient for the stated baseline/reconstruction use. |
 | `ADMITTED_SCENARIO` | Scenario-transfer and change-signal preservation have also been demonstrated. |
 
-Current repository target: **QUALIFIED_SYNTHETIC**, with BRO ingest awaiting live GitHub Actions evidence and real LHM/MODFLOW data awaiting admission.
+Current project level: **QUALIFIED_SYNTHETIC** for TS01–TS05. TS06 is additionally **technically live-qualified** for public BRO/PDOK ingestion through GitHub Actions, with 126,578 observations parsed from two fully assessed GLD series and zero ingest failures in the qualification smoke run. This does not promote the overall project to `QUALIFIED_REAL_DATA`: monitoring-tube suitability, lineage, LHM/MODFLOW pairing and TS05 admission still have to be demonstrated on the actual pilot dataset.
 
 ## Required repository evidence
 
@@ -51,4 +51,4 @@ Every admitted capability should identify:
 - qualification verdict;
 - next permitted action.
 
-See `docs/architecture/TRACEABILITY.md` and `docs/qualification/TS01_TS06_CHECKPOINT.md`.
+See `docs/architecture/TRACEABILITY.md`, `docs/qualification/TS01_TS06_CHECKPOINT.md`, and `docs/qualification/LIVE_BRO_QUALIFICATION.md`.
