@@ -56,10 +56,12 @@ BRO/PDOK ingest:
 ```bash
 wdm-lhm bro-ingest output/bro_pilot \
   --bbox 5.60,51.94,5.75,52.02 \
-  --min-observations 100 \
+  --min-catalog-observations 1 \
   --min-span-days 730 \
   --max-series 25
 ```
+
+`--min-catalog-observations` refers to BRO GLD **Observatie entities**, not individual time-value measurements. One Observatie can contain an entire measurement series. Scientific minimum measurement counts are therefore applied after download by TS07. The older `bro-ingest --min-observations` spelling remains an alias for backwards compatibility.
 
 Conservative BRO-only freatic pre-screen:
 
@@ -67,8 +69,12 @@ Conservative BRO-only freatic pre-screen:
 wdm-lhm freatic-prescreen \
   output/bro_pilot/bundle/stations.csv \
   output/bro_pilot/bundle/observations.csv \
-  output/freatic_screen
+  output/freatic_screen \
+  --min-observations 100 \
+  --min-span-days 730
 ```
+
+Here `--min-observations` really does mean the minimum number of parsed individual GLD time-value measurements.
 
 The pre-screen writes `freatic_prescreen.csv`, `vertical_head_pairs.csv` and a manifest. `CANDIDATE_FREATIC` means candidate for further evidence-based admission, not final proof of a freatic connection.
 
