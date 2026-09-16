@@ -10,6 +10,7 @@
 | Regime analysis | `THEORY.md` §5 | `FORMAL_MODEL.md` §6 | `regime_analysis.py`, `regimes.py` | `test_regime_analysis.py` |
 | Process diagnosis | `THEORY.md` §5 | `FORMAL_MODEL.md` §7 | `process_diagnosis.py` | `test_process_diagnosis.py` |
 | Admission gate | `DATA_LINEAGE.md` | `FORMAL_MODEL.md` §8 | `admission.py` | `test_admission.py` |
-| BRO/PDOK ingest | `DATA_LINEAGE.md` | source contract | `bro_ingest.py` | `test_bro_ingest.py`; live Actions smoke PASS |
-| TS07 freatic pre-screen and admission semantics | `qualification/FREATIC_SCREENING_THEORY.md`, `qualification/FREATIC_SCREENING_CONCEPTUAL_MODEL.md` | `qualification/FREATIC_SCREENING_FORMAL_MODEL.md` | `freatic_screening.py`, CLI `freatic-prescreen` | `test_freatic_screening.py`; live TS07 smoke required |
+| BRO/PDOK ingest | `DATA_LINEAGE.md` | source contract | `bro_ingest.py` | `test_bro_ingest.py`, `test_bro_catalog_semantics.py`; live Actions smoke PASS |
+| TS07 Stage-A freatic candidate screening | `qualification/FREATIC_SCREENING_THEORY.md`, `qualification/FREATIC_SCREENING_CONCEPTUAL_MODEL.md` | `qualification/FREATIC_SCREENING_FORMAL_MODEL.md` | `freatic_screening.py`, CLI `freatic-prescreen` | `test_freatic_screening.py`, `test_bro_catalog_semantics.py`; `qualification/TS07_CHECKPOINT.md`; live TS07 smoke PASS |
+| TS07 Stage-B final freatic admission | same TS07 theory/conceptual basis | fail-closed Stage-B semantics in `qualification/FREATIC_SCREENING_FORMAL_MODEL.md` | evidence interface only; no automatic admission rule | **not yet admitted**; requires additional hydrogeological evidence and known-case qualification |
 | WDM conditioning | not yet admitted | not canonical | none | blocked pending real-data evidence |
