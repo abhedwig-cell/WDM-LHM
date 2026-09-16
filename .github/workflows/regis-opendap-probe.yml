@@ -1,0 +1,59 @@
+name: REGIS OPeNDAP metadata probe
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'work/regis-point-columns'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Discover REGIS OPeNDAP metadata only
+        run: |
+          python -m wdm_lhm.regis_opendap_probe_cli \
+            --output-dir regis-opendap-evidence
+      - name: Validate discovery boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("regis-opendap-evidence")
+          manifest = json.loads((root / "regis_opendap_probe_manifest.json").read_text())
+          counts = manifest["counts"]
+          guards = manifest["guardrails"]
+          if counts["pages"] < 1:
+              raise SystemExit("No OPeNDAP catalog page was acquired")
+          if counts["dataset_candidates"] < 1:
+              raise SystemExit("No REGIS dataset candidate was discovered")
+          if counts["dap2_metadata_candidates"] < 1:
+              raise SystemExit("No REGIS candidate exposed both DDS and DAS metadata")
+          if any(guards.values()):
+              raise SystemExit(f"Discovery boundary violated: {guards}")
+          total = sum(p.stat().st_size for p in root.rglob("*") if p.is_file())
+          if total > 15 * 1024 * 1024:
+              raise SystemExit(f"Evidence artifact exceeds 15 MiB guardrail: {total}")
+          print(json.dumps({"counts": counts, "guardrails": guards, "artifact_bytes": total}, indent=2))
+          PY
+      - name: Upload compact discovery evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: regis-opendap-probe-${{ github.run_id }}
+          path: regis-opendap-evidence
+          if-no-files-found: error
+          retention-days: 14
