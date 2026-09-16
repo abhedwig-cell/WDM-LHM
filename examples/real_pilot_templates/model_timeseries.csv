@@ -1,0 +1,2 @@
+date,cell_id,model_head_mnap,drain_flux_mm_d,river_flux_mm_d,surface_water_flux_mm_d,recharge_mm_d
+2000-01-01,EXAMPLE_CELL,0,,,,
