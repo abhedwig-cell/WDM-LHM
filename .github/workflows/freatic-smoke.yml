@@ -8,6 +8,7 @@ on:
       - "src/wdm_lhm/cli.py"
       - "tests/test_freatic_screening.py"
       - "docs/qualification/FREATIC_SCREENING_*"
+      - "docs/SERVICE_CONTRACT.md"
       - ".github/workflows/freatic-smoke.yml"
       - "pyproject.toml"
   workflow_dispatch:
@@ -51,9 +52,12 @@ jobs:
           fi
       - name: Live BRO/PDOK ingest
         run: |
+          # PDOK number_of_observations counts GLD Observatie entities, each of
+          # which can contain an entire time-value series. Keep this source-side
+          # threshold permissive; TS07 below applies the actual measurement count.
           wdm-lhm bro-ingest output/freatic_smoke/bro \
             --bbox "${{ steps.params.outputs.bbox }}" \
-            --min-observations 100 \
+            --min-observations 1 \
             --min-span-days 730 \
             --max-series "${{ steps.params.outputs.max_series }}" \
             --no-preliminary
@@ -76,7 +80,7 @@ jobs:
           screen = pd.read_csv("output/freatic_smoke/screen/freatic_prescreen.csv")
           allowed = {"CANDIDATE_FREATIC", "REVIEW_DEEP_OR_AMBIGUOUS", "INSUFFICIENT_DATA", "NOT_USABLE_SERIES"}
           print(json.dumps(manifest, indent=2))
-          print(screen[["station_id", "screen_bottom_depth_m", "prescreen_verdict", "reason_codes"]].to_string(index=False))
+          print(screen[["station_id", "n_observations", "screen_bottom_depth_m", "prescreen_verdict", "reason_codes"]].to_string(index=False))
           if screen.empty:
               raise SystemExit("No tubes reached the Stage-A screen")
           invalid = set(screen["prescreen_verdict"].dropna()) - allowed
@@ -84,6 +88,8 @@ jobs:
               raise SystemExit(f"Unexpected verdicts: {sorted(invalid)}")
           if sum(manifest["counts"].values()) != len(screen):
               raise SystemExit("Manifest verdict counts do not match evidence rows")
+          if (screen["n_observations"] < 100).all():
+              raise SystemExit("No downloaded series satisfies the actual measurement-count requirement")
           PY
       - name: Upload reproducible TS07 evidence
         if: always()
