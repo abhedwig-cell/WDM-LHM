@@ -1,0 +1,75 @@
+name: REGIS coordinate evidence probe
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.ref == 'work/regis-point-columns'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Acquire coordinate arrays only
+        run: |
+          python -m wdm_lhm.regis_coordinate_probe_cli \
+            --output-dir regis-coordinate-evidence
+      - name: Validate coordinate-only boundary
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("regis-coordinate-evidence")
+          manifest = json.loads((root / "regis_coordinate_manifest.json").read_text())
+          response = manifest["response"]
+          request = manifest["request"]
+          guards = manifest["guardrails"]
+          expected = ["x", "y", "x_bounds", "y_bounds", "layer"]
+          if request["variables"] != expected:
+              raise SystemExit(f"Coordinate variable drift: {request['variables']}")
+          if not guards["coordinate_values_requested"]:
+              raise SystemExit("Coordinate request flag unexpectedly false")
+          for key in (
+              "hydrogeological_model_values_requested",
+              "freatic_surface_requested",
+              "point_to_cell_mapping_performed",
+              "hydrogeological_interpretation_performed",
+              "admission_decision_performed",
+          ):
+              if guards[key]:
+                  raise SystemExit(f"Boundary violation: {key}=true")
+          raw = root / response["artifact_file"]
+          if not raw.is_file():
+              raise SystemExit("Raw coordinate evidence is missing")
+          if raw.stat().st_size != response["bytes"] or raw.stat().st_size > 2 * 1024 * 1024:
+              raise SystemExit("Coordinate response size guardrail failed")
+          digest = hashlib.sha256(raw.read_bytes()).hexdigest()
+          if digest != response["sha256"]:
+              raise SystemExit("Coordinate response SHA-256 mismatch")
+          forbidden = ("top", "bottom", "hgv", "kD", "kh", "kv", "sdh", "sdv", "freatisch")
+          if any(name in request["requested_url"] for name in forbidden):
+              raise SystemExit("Hydrogeological variable leaked into coordinate request")
+          print(json.dumps({"request": request, "response": response, "guardrails": guards}, indent=2))
+          PY
+      - name: Upload compact coordinate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: regis-coordinate-probe-${{ github.run_id }}
+          path: regis-coordinate-evidence
+          if-no-files-found: error
+          retention-days: 14
