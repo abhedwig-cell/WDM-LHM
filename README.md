@@ -6,6 +6,8 @@ Research software for diagnosing and, only where justified, combining informatio
 
 **Status A-light bootstrap / diagnostic research software.** The repository currently implements TS01–TS06: paired time-series diagnostics, multiwell observation operators, regime and process diagnostics, real-data admission, and BRO/PDOK ingestion. It does **not** yet contain an admitted WDM fusion or correction model.
 
+TS06 has been technically qualified against the live public BRO/PDOK services through GitHub Actions. This qualifies data ingestion, not the hydrological suitability or independence of automatically selected monitoring tubes. See [`docs/qualification/LIVE_BRO_QUALIFICATION.md`](docs/qualification/LIVE_BRO_QUALIFICATION.md).
+
 The scientific documentation is deliberately separated into:
 
 - [`docs/THEORY.md`](docs/THEORY.md)
@@ -23,7 +25,7 @@ python -m pip install -e . pytest
 pytest -q
 ```
 
-The bootstrap baseline is 16 tests.
+The current bootstrap baseline is 17 tests.
 
 ## Main commands
 
@@ -57,7 +59,7 @@ wdm-lhm bro-ingest output/bro_pilot \
   --max-series 25
 ```
 
-A GitHub Actions workflow is provided for live BRO execution so results do not depend on the network restrictions of a chat/container environment.
+A GitHub Actions workflow provides live BRO execution so results do not depend on the network restrictions of a chat/container environment.
 
 ## Scientific guardrail
 
