@@ -1,0 +1,90 @@
+name: REGIS one-time full inventory
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/wdm_lhm/regis_full_inventory.py"
+      - "src/wdm_lhm/regis_full_inventory_cli.py"
+      - "tests/test_regis_full_inventory.py"
+      - ".github/workflows/regis-full-inventory.yml"
+      - "pyproject.toml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  full-inventory:
+    if: github.event_name == 'workflow_dispatch' || github.head_ref == 'work/regis-full-inventory'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      REGIS_URL: https://service.pdok.nl/tno/bro-regis-ii/atom/downloads/brohgm.zip
+      MODEL_MEMBER: Model_HGM000000000062.zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Record source headers and runner capacity
+        run: |
+          mkdir -p output/regis_full_inventory
+          curl --fail --silent --show-error --location --head "$REGIS_URL" > output/regis_full_inventory/source_headers.txt
+          df -h > output/regis_full_inventory/runner_disk_before.txt
+      - name: Download current REGIS delivery to ephemeral runner
+        run: |
+          curl --fail --show-error --location \
+            --retry 3 --retry-delay 5 --retry-all-errors \
+            --output /tmp/brohgm.zip "$REGIS_URL"
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+          p = Path('/tmp/brohgm.zip')
+          size = p.stat().st_size
+          print(f'downloaded_bytes={size}')
+          if not (1_000_000_000 <= size <= 2_000_000_000):
+              raise SystemExit(f'Unexpected REGIS archive size: {size}')
+          if not zipfile.is_zipfile(p):
+              raise SystemExit('Downloaded REGIS object is not a ZIP file')
+          PY
+      - name: Inventory nested model ZIP without extracting model members
+        run: |
+          wdm-lhm-regis-full-inventory \
+            /tmp/brohgm.zip \
+            output/regis_full_inventory \
+            --model-member "$MODEL_MEMBER"
+      - name: Validate bounded evidence and remove large source
+        run: |
+          rm -f /tmp/brohgm.zip
+          df -h > output/regis_full_inventory/runner_disk_after.txt
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('output/regis_full_inventory')
+          m = json.loads((root / 'regis_full_inventory_manifest.json').read_text(encoding='utf-8'))
+          print(json.dumps(m, indent=2))
+          if m['status'] != 'INVENTORY_ONLY_NO_MODEL_MEMBERS_EXTRACTED':
+              raise SystemExit('Unexpected inventory status')
+          if m['inventory']['file_count'] < 1:
+              raise SystemExit('REGIS inner ZIP inventory is empty')
+          if m['guardrails']['inner_members_extracted'] != 0:
+              raise SystemExit('Model members were unexpectedly extracted')
+          if m['guardrails']['retain_inner_zip']:
+              raise SystemExit('Nested model ZIP was unexpectedly retained')
+          oversized = [(p, p.stat().st_size) for p in root.rglob('*') if p.is_file() and p.stat().st_size > 50_000_000]
+          if oversized:
+              raise SystemExit(f'Oversized evidence files would be uploaded: {oversized}')
+          PY
+      - name: Upload compact inventory evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: regis-full-inventory-${{ github.run_id }}
+          path: output/regis_full_inventory/
+          if-no-files-found: error
+          retention-days: 14
