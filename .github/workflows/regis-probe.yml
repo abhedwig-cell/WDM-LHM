@@ -1,0 +1,155 @@
+name: REGIS acquisition probe
+
+on:
+  pull_request:
+    paths:
+      - "src/wdm_lhm/regis_probe.py"
+      - "src/wdm_lhm/regis_probe_cli.py"
+      - "src/wdm_lhm/remote_zip.py"
+      - "src/wdm_lhm/remote_zip_cli.py"
+      - "src/wdm_lhm/remote_zip_extract.py"
+      - "src/wdm_lhm/remote_zip_extract_cli.py"
+      - "tests/test_regis_probe.py"
+      - "tests/test_remote_zip.py"
+      - "tests/test_remote_zip_extract.py"
+      - "docs/qualification/STAGE_B_REGIS_ACQUISITION.md"
+      - ".github/workflows/regis-probe.yml"
+      - "pyproject.toml"
+  workflow_dispatch:
+    inputs:
+      atom_url:
+        description: "REGIS II ATOM entry point"
+        required: true
+        default: "https://service.pdok.nl/tno/bro-regis-ii/atom/index.xml"
+      max_depth:
+        description: "Maximum nested ATOM depth"
+        required: true
+        default: "3"
+
+permissions:
+  contents: read
+
+jobs:
+  regis-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Resolve parameters
+        id: params
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "atom_url=${{ inputs.atom_url }}" >> "$GITHUB_OUTPUT"
+            echo "max_depth=${{ inputs.max_depth }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "atom_url=https://service.pdok.nl/tno/bro-regis-ii/atom/index.xml" >> "$GITHUB_OUTPUT"
+            echo "max_depth=3" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Probe public REGIS delivery
+        run: |
+          wdm-lhm-regis-probe output/regis_probe \
+            --atom-url "${{ steps.params.outputs.atom_url }}" \
+            --max-depth "${{ steps.params.outputs.max_depth }}"
+      - name: Validate acquisition evidence and select archive
+        id: archive
+        shell: bash
+        run: |
+          python - <<'PY' > /tmp/archive_url.txt
+          import json
+          from pathlib import Path
+          import sys
+
+          p = Path("output/regis_probe/regis_probe_manifest.json")
+          if not p.exists():
+              raise SystemExit("Missing REGIS probe manifest")
+          m = json.loads(p.read_text(encoding="utf-8"))
+          print(json.dumps(m, indent=2), file=sys.stderr)
+          if m["counts"]["feeds"] < 1:
+              raise SystemExit("No REGIS ATOM feeds parsed")
+          if m["counts"]["download_candidates"] != 1:
+              raise SystemExit(f"Expected exactly one REGIS archive candidate, got {m['counts']['download_candidates']}")
+          d = m["downloads"][0]
+          if not d["href"].startswith("https://service.pdok.nl/"):
+              raise SystemExit(f"Unexpected REGIS archive host: {d['href']}")
+          if not d["href"].lower().endswith(".zip"):
+              raise SystemExit(f"Expected ZIP delivery: {d['href']}")
+          print(d["href"])
+          PY
+          echo "archive_url=$(cat /tmp/archive_url.txt)" >> "$GITHUB_OUTPUT"
+      - name: Index remote REGIS ZIP by HTTP ranges
+        run: |
+          wdm-lhm-remote-zip-index \
+            "${{ steps.archive.outputs.archive_url }}" \
+            output/regis_zip_index
+      - name: Validate remote ZIP structure and select metadata XML
+        id: metadata
+        shell: bash
+        run: |
+          python - <<'PY' > /tmp/metadata_member.txt
+          import json
+          from pathlib import Path
+          import sys
+
+          p = Path("output/regis_zip_index/remote_zip_index.json")
+          if not p.exists():
+              raise SystemExit("Missing remote ZIP index")
+          m = json.loads(p.read_text(encoding="utf-8"))
+          print(json.dumps({
+              "remote": m["remote"],
+              "eocd": m["eocd"],
+              "counts": m["counts"],
+              "entries": m["entries"],
+          }, indent=2), file=sys.stderr)
+          if m["counts"]["files"] < 1:
+              raise SystemExit("REGIS archive index contains no files")
+          candidates = [e for e in m["entries"] if e["name"].startswith("MetaData_") and e["name"].lower().endswith(".xml")]
+          if len(candidates) != 1:
+              raise SystemExit(f"Expected exactly one REGIS metadata XML, got {len(candidates)}")
+          if candidates[0]["uncompressed_size"] > 10 * 1024 * 1024:
+              raise SystemExit("REGIS metadata XML unexpectedly exceeds bounded extraction size")
+          print(candidates[0]["name"])
+          PY
+          echo "member_name=$(cat /tmp/metadata_member.txt)" >> "$GITHUB_OUTPUT"
+      - name: Extract bounded REGIS metadata XML by HTTP ranges
+        run: |
+          wdm-lhm-remote-zip-extract \
+            "${{ steps.archive.outputs.archive_url }}" \
+            output/regis_zip_index/remote_zip_index.json \
+            "${{ steps.metadata.outputs.member_name }}" \
+            output/regis_metadata.xml \
+            --max-uncompressed-mb 1
+      - name: Validate metadata XML
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          import hashlib
+
+          p = Path("output/regis_metadata.xml")
+          if not p.exists() or p.stat().st_size == 0:
+              raise SystemExit("Missing extracted REGIS metadata XML")
+          root = ET.fromstring(p.read_bytes())
+          print("metadata_bytes=", p.stat().st_size)
+          print("metadata_sha256=", hashlib.sha256(p.read_bytes()).hexdigest())
+          print("root_tag=", root.tag)
+          print("child_tags=", sorted({x.tag.rsplit('}', 1)[-1] for x in root.iter()})[:100])
+      - name: Upload reproducible acquisition evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regis-probe-${{ github.run_id }}
+          path: |
+            output/regis_probe/
+            output/regis_zip_index/
+            output/regis_metadata.xml
+          if-no-files-found: warn
+          retention-days: 14
