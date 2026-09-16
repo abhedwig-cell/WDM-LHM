@@ -137,8 +137,6 @@ def _normalize_col(s: str) -> str:
 
 def _read_csv_flexible(payload: bytes) -> pd.DataFrame:
     text = payload.decode("utf-8-sig", errors="replace")
-    # BRO CSV variants are ordinary delimited text, but the compact endpoint can
-    # be either headered or headerless. First keep the ordinary headered route.
     try:
         df = pd.read_csv(io.StringIO(text), sep=None, engine="python")
     except Exception:
@@ -148,14 +146,7 @@ def _read_csv_flexible(payload: bytes) -> pd.DataFrame:
 
 
 def _read_headerless_compact_csv(payload: bytes) -> pd.DataFrame | None:
-    """Recognize the current BRO compact GLD positional format conservatively.
-
-    The live service (verified 2026-09-16) can return six comma-separated
-    fields without a header, with fully empty separator rows. The first two
-    positions are timestamp and water level. We only accept this positional
-    interpretation when the non-empty rows overwhelmingly validate as datetime
-    + numeric values; otherwise return ``None`` rather than guessing.
-    """
+    """Recognize the current BRO compact GLD positional format conservatively."""
     text = payload.decode("utf-8-sig", errors="replace")
     try:
         dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
@@ -172,7 +163,6 @@ def _read_headerless_compact_csv(payload: bytes) -> pd.DataFrame | None:
     times = pd.to_datetime(raw.iloc[:, 0], errors="coerce", utc=True)
     values = pd.to_numeric(raw.iloc[:, 1].astype(str).str.replace(",", ".", regex=False), errors="coerce")
     valid = times.notna() & values.notna()
-    # Require a strong structural match and more than one real observation.
     if valid.sum() < 2 or valid.mean() < 0.95:
         return None
     out = raw.loc[valid].copy()
@@ -184,12 +174,7 @@ def _read_headerless_compact_csv(payload: bytes) -> pd.DataFrame | None:
 
 def parse_gld_compact_csv(payload: bytes, *, gld_bro_id: str, station_id: str,
                           series_class: str) -> pd.DataFrame:
-    """Parse BRO compact GLD CSV into the TS01-TS05 observation contract.
-
-    The parser is deliberately defensive because the CSV endpoint is explicitly
-    labelled experimental. It recognizes common Dutch/WaterML-like labels and
-    refuses ambiguous files rather than guessing a groundwater value column.
-    """
+    """Parse BRO compact GLD CSV into the TS01-TS05 observation contract."""
     df = _read_csv_flexible(payload)
     if df.empty:
         return pd.DataFrame(columns=["date", "station_id", "obs_head_mnap", "gld_bro_id", "series_class"])
@@ -280,7 +265,6 @@ def _join_metadata(gmw: pd.DataFrame, tubes: pd.DataFrame, gld: pd.DataFrame, cf
 def _make_station_table(meta: pd.DataFrame) -> pd.DataFrame:
     if meta.empty:
         return pd.DataFrame(columns=["station_id", "x_rd", "y_rd", "ground_level_mnap", "used_in_wdm", "used_in_lhm_calibration", "heldout_group", "metadata_source"])
-    # Prefer tube coordinates; fall back to parent GMW coordinates.
     lon = meta["lon"] if "lon" in meta.columns else meta.get("lon_gmw")
     lat = meta["lat"] if "lat" in meta.columns else meta.get("lat_gmw")
     if lon is None or lat is None:
@@ -303,8 +287,9 @@ def _make_station_table(meta: pd.DataFrame) -> pd.DataFrame:
         "gld_bro_id": meta["gld_bro_id"].astype(str),
         "screen_top_position_mnap": pd.to_numeric(meta.get("screen_top_position"), errors="coerce"),
         "screen_bottom_position_mnap": pd.to_numeric(meta.get("screen_bottom_position"), errors="coerce"),
+        "tube_status": meta.get("tube_status"),
+        "tube_in_use": meta.get("tube_in_use"),
     })
-    # Multiple GLDs can refer to one tube. Keep one station metadata row.
     return out.sort_values(["station_id", "gld_bro_id"]).drop_duplicates("station_id", keep="first")
 
 
@@ -358,33 +343,24 @@ def ingest_bro_groundwater(output_dir: str | Path, config: BROIngestConfig,
             failures.append({"gld_bro_id": s.get("gld_bro_id"), "station_id": s.get("station_id"), "stage": "download_or_parse_series", "error": f"{type(exc).__name__}: {exc}"})
 
     obs = pd.concat(observations, ignore_index=True) if observations else pd.DataFrame(columns=["date", "station_id", "obs_head_mnap", "gld_bro_id", "series_class", "source"])
-    # A station may have multiple GLD objects. On overlap prefer assessed over preliminary.
-    if not obs.empty:
-        rank = {"fully_assessed": 0, "preliminary": 1, "unknown": 2}
-        obs["_rank"] = obs["series_class"].map(rank).fillna(9)
-        obs = obs.sort_values(["station_id", "date", "_rank"]).drop_duplicates(["station_id", "date"], keep="first").drop(columns="_rank")
     obs.to_csv(bundle / "observations.csv", index=False)
     pd.DataFrame(failures).to_csv(bundle / "ingest_failures.csv", index=False)
 
     manifest = {
-        "ts": "TS06",
+        "capability": "TS06_BRO_INGEST",
         "config": config.as_dict(),
-        "services": {"pdok_gm": PDOK_GM_BASE, "bro_gld": BRO_GLD_BASE, "wdm_wms": WDM_WMS},
+        "services": {"pdok_gm_base": PDOK_GM_BASE, "bro_gld_base": BRO_GLD_BASE, "wdm_wms": WDM_WMS},
         "counts": {
             "gmw": int(len(collections["gm_gmw"])),
-            "tubes": int(len(collections["gm_gmw_monitoringtube"])),
-            "gld": int(len(collections["gm_gld"])),
+            "monitoring_tubes": int(len(collections["gm_gmw_monitoringtube"])),
+            "gld_objects": int(len(collections["gm_gld"])),
             "selected_series": int(len(meta)),
             "stations": int(stations["station_id"].nunique()) if not stations.empty else 0,
             "observations": int(len(obs)),
             "failures": int(len(failures)),
         },
-        "guardrails": [
-            "BRO/PDOK source bytes cached by exact URL and SHA-256.",
-            "Lineage relative to WDM/LHM remains unknown until audited; it is never inferred from BRO presence.",
-            "GLD CSV parser refuses ambiguous value/time columns.",
-            "WDM sampling is intentionally not used as an independent observation in TS06.",
-        ],
+        "lineage_policy": "used_in_wdm and used_in_lhm_calibration remain unknown until audited; heldout_group remains unknown until study design",
+        "qualification_boundary": "BRO/PDOK ingest only; no assertion that selected tubes represent the phreatic water table and no LHM comparison yet",
     }
     (bundle / "ingest_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     return {"manifest": manifest, "stations": stations, "observations": obs, "catalog": meta, "failures": pd.DataFrame(failures), "bundle_dir": bundle}
