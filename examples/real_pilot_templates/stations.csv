@@ -1,0 +1,2 @@
+station_id,x_rd,y_rd,ground_level_mnap,drain_level_mnap,filter_top_mnap,filter_bottom_mnap,used_in_wdm,used_in_lhm_calibration,heldout_group,metadata_source
+EXAMPLE,0,0,0,,,,unknown,unknown,unassigned,replace_with_real_metadata

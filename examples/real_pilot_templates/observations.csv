@@ -1,0 +1,2 @@
+date,station_id,obs_head_mnap,quality_flag,observation_source
+2000-01-01,EXAMPLE,0,unknown,replace_with_real_source

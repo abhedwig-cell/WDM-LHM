@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wdm-lhm"
+version = "0.6.0"
+description = "Real-data admission and process-aware groundwater diagnostics for LHM/MODFLOW and WDM research"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "pandas>=2.0", "scipy>=1.10", "matplotlib>=3.7", "pyproj>=3.5"]
+
+[project.scripts]
+wdm-lhm = "wdm_lhm.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
