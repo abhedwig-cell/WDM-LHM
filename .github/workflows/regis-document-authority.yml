@@ -1,0 +1,129 @@
+name: REGIS documentation authority extraction
+
+on:
+  pull_request:
+    types: [ready_for_review]
+    paths:
+      - "src/wdm_lhm/regis_document_authority.py"
+      - "src/wdm_lhm/regis_document_authority_cli.py"
+      - "tests/test_regis_document_authority.py"
+      - "docs/qualification/STAGE_B_REGIS_DOCUMENT_AUTHORITY.md"
+      - ".github/workflows/regis-document-authority.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract-authority:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Record source headers and runner capacity
+        run: |
+          mkdir -p output/regis_authority
+          df -h / /tmp | tee output/regis_authority/runner_disk_before.txt
+          curl --fail --silent --show-error --location --head \
+            https://service.pdok.nl/tno/bro-regis-ii/atom/downloads/brohgm.zip \
+            > output/regis_authority/source_headers.txt
+
+      - name: Resumably download qualified REGIS delivery
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://service.pdok.nl/tno/bro-regis-ii/atom/downloads/brohgm.zip"
+          target="/tmp/brohgm.zip"
+          success=0
+          for attempt in 1 2 3 4 5 6; do
+            echo "Download attempt ${attempt}; existing bytes: $(stat -c%s "$target" 2>/dev/null || echo 0)"
+            if curl --fail --location --show-error \
+              --connect-timeout 30 \
+              --retry 2 --retry-all-errors --retry-delay 5 \
+              --continue-at - --output "$target" "$url"; then
+              success=1
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$success" != "1" ]]; then
+            echo "REGIS download did not complete after resumable attempts" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          p = Path('/tmp/brohgm.zip')
+          print('Downloaded bytes:', p.stat().st_size)
+          if p.stat().st_size < 1_000_000_000:
+              raise SystemExit('Downloaded REGIS delivery is unexpectedly small')
+          if not zipfile.is_zipfile(p):
+              raise SystemExit('Downloaded REGIS delivery is not a valid ZIP')
+          PY
+
+      - name: Extract exact authority PDF only
+        run: |
+          python -m wdm_lhm.regis_document_authority_cli \
+            /tmp/brohgm.zip output/regis_authority \
+            --max-document-mib 5
+
+      - name: Validate bounded evidence and remove source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('output/regis_authority')
+          p = root / 'regis_authority_document_manifest.json'
+          if not p.exists():
+              raise SystemExit('Missing REGIS authority manifest')
+          m = json.loads(p.read_text(encoding='utf-8'))
+          print(json.dumps(m, indent=2))
+          guard = m['guardrails']
+          doc = m['authority_document']
+          if m['status'] != 'EXACT_REGIS_AUTHORITY_DOCUMENT_EXTRACTED':
+              raise SystemExit('Unexpected authority extraction status')
+          if guard['extracted_nonzip_member_count'] != 1:
+              raise SystemExit('Exactly one non-ZIP authority document must be extracted')
+          if guard['raster_members_opened'] != 0:
+              raise SystemExit('Guardrail violation: raster member opened')
+          if guard['hydrogeological_interpretation_performed'] or guard['admission_decision_performed']:
+              raise SystemExit('Extraction workflow performed out-of-scope interpretation/admission')
+          pdf = root / doc['output_name']
+          if not pdf.exists() or pdf.stat().st_size != 900620:
+              raise SystemExit('Authority PDF missing or unexpected size')
+          if pdf.stat().st_size > 5 * 1024 * 1024:
+              raise SystemExit('Authority PDF exceeds compact evidence guardrail')
+          allowed = {
+              'regis_authority_document_manifest.json',
+              'source_headers.txt',
+              'runner_disk_before.txt',
+              doc['output_name'],
+          }
+          unexpected = [f.name for f in root.iterdir() if f.is_file() and f.name not in allowed]
+          if unexpected:
+              raise SystemExit(f'Unexpected extracted evidence files: {unexpected}')
+          PY
+          rm -f /tmp/brohgm.zip
+          df -h / /tmp | tee output/regis_authority/runner_disk_after.txt
+          test ! -e /tmp/brohgm.zip
+
+      - name: Upload authority PDF and provenance evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: regis-document-authority-${{ github.run_id }}
+          path: output/regis_authority/
+          if-no-files-found: error
+          retention-days: 14
