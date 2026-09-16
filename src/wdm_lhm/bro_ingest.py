@@ -137,12 +137,49 @@ def _normalize_col(s: str) -> str:
 
 def _read_csv_flexible(payload: bytes) -> pd.DataFrame:
     text = payload.decode("utf-8-sig", errors="replace")
+    # BRO CSV variants are ordinary delimited text, but the compact endpoint can
+    # be either headered or headerless. First keep the ordinary headered route.
     try:
         df = pd.read_csv(io.StringIO(text), sep=None, engine="python")
     except Exception:
         dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
         df = pd.read_csv(io.StringIO(text), sep=dialect.delimiter)
     return df.dropna(axis=1, how="all")
+
+
+def _read_headerless_compact_csv(payload: bytes) -> pd.DataFrame | None:
+    """Recognize the current BRO compact GLD positional format conservatively.
+
+    The live service (verified 2026-09-16) can return six comma-separated
+    fields without a header, with fully empty separator rows. The first two
+    positions are timestamp and water level. We only accept this positional
+    interpretation when the non-empty rows overwhelmingly validate as datetime
+    + numeric values; otherwise return ``None`` rather than guessing.
+    """
+    text = payload.decode("utf-8-sig", errors="replace")
+    try:
+        dialect = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|")
+        sep = dialect.delimiter
+    except Exception:
+        sep = ","
+    try:
+        raw = pd.read_csv(io.StringIO(text), sep=sep, header=None, engine="python")
+    except Exception:
+        return None
+    raw = raw.dropna(axis=1, how="all").dropna(axis=0, how="all")
+    if raw.shape[1] < 2 or raw.empty:
+        return None
+    times = pd.to_datetime(raw.iloc[:, 0], errors="coerce", utc=True)
+    values = pd.to_numeric(raw.iloc[:, 1].astype(str).str.replace(",", ".", regex=False), errors="coerce")
+    valid = times.notna() & values.notna()
+    # Require a strong structural match and more than one real observation.
+    if valid.sum() < 2 or valid.mean() < 0.95:
+        return None
+    out = raw.loc[valid].copy()
+    out.columns = [f"field_{i}" for i in range(out.shape[1])]
+    out["__parsed_time"] = times.loc[valid].to_numpy()
+    out["__parsed_value"] = values.loc[valid].to_numpy()
+    return out
 
 
 def parse_gld_compact_csv(payload: bytes, *, gld_bro_id: str, station_id: str,
@@ -168,16 +205,22 @@ def parse_gld_compact_csv(payload: bytes, *, gld_bro_id: str, station_id: str,
     ]
     tcol = next((norm[c] for c in time_candidates if c in norm), None)
     vcol = next((norm[c] for c in value_candidates if c in norm), None)
-    if tcol is None or vcol is None:
-        raise ValueError(
-            "BRO GLD compact CSV schema not recognized; refusing heuristic value selection. "
-            f"columns={list(df.columns)}"
-        )
-
-    out = pd.DataFrame({
-        "date": pd.to_datetime(df[tcol], errors="coerce", utc=True),
-        "obs_head_mnap": pd.to_numeric(df[vcol].astype(str).str.replace(",", ".", regex=False), errors="coerce"),
-    }).dropna(subset=["date", "obs_head_mnap"])
+    if tcol is not None and vcol is not None:
+        out = pd.DataFrame({
+            "date": pd.to_datetime(df[tcol], errors="coerce", utc=True),
+            "obs_head_mnap": pd.to_numeric(df[vcol].astype(str).str.replace(",", ".", regex=False), errors="coerce"),
+        }).dropna(subset=["date", "obs_head_mnap"])
+    else:
+        positional = _read_headerless_compact_csv(payload)
+        if positional is None:
+            raise ValueError(
+                "BRO GLD compact CSV schema not recognized; refusing heuristic value selection. "
+                f"columns={list(df.columns)}"
+            )
+        out = pd.DataFrame({
+            "date": positional["__parsed_time"],
+            "obs_head_mnap": positional["__parsed_value"],
+        }).dropna(subset=["date", "obs_head_mnap"])
     out["date"] = out["date"].dt.tz_convert("Europe/Amsterdam").dt.tz_localize(None)
     out["station_id"] = station_id
     out["gld_bro_id"] = gld_bro_id
@@ -237,6 +280,7 @@ def _join_metadata(gmw: pd.DataFrame, tubes: pd.DataFrame, gld: pd.DataFrame, cf
 def _make_station_table(meta: pd.DataFrame) -> pd.DataFrame:
     if meta.empty:
         return pd.DataFrame(columns=["station_id", "x_rd", "y_rd", "ground_level_mnap", "used_in_wdm", "used_in_lhm_calibration", "heldout_group", "metadata_source"])
+    # Prefer tube coordinates; fall back to parent GMW coordinates.
     lon = meta["lon"] if "lon" in meta.columns else meta.get("lon_gmw")
     lat = meta["lat"] if "lat" in meta.columns else meta.get("lat_gmw")
     if lon is None or lat is None:
@@ -260,6 +304,7 @@ def _make_station_table(meta: pd.DataFrame) -> pd.DataFrame:
         "screen_top_position_mnap": pd.to_numeric(meta.get("screen_top_position"), errors="coerce"),
         "screen_bottom_position_mnap": pd.to_numeric(meta.get("screen_bottom_position"), errors="coerce"),
     })
+    # Multiple GLDs can refer to one tube. Keep one station metadata row.
     return out.sort_values(["station_id", "gld_bro_id"]).drop_duplicates("station_id", keep="first")
 
 
@@ -313,6 +358,7 @@ def ingest_bro_groundwater(output_dir: str | Path, config: BROIngestConfig,
             failures.append({"gld_bro_id": s.get("gld_bro_id"), "station_id": s.get("station_id"), "stage": "download_or_parse_series", "error": f"{type(exc).__name__}: {exc}"})
 
     obs = pd.concat(observations, ignore_index=True) if observations else pd.DataFrame(columns=["date", "station_id", "obs_head_mnap", "gld_bro_id", "series_class", "source"])
+    # A station may have multiple GLD objects. On overlap prefer assessed over preliminary.
     if not obs.empty:
         rank = {"fully_assessed": 0, "preliminary": 1, "unknown": 2}
         obs["_rank"] = obs["series_class"].map(rank).fillna(9)
