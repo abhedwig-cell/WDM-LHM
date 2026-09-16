@@ -53,10 +53,29 @@ jobs:
             --min-observations 30 \
             --min-span-days 365 \
             --max-series "${{ steps.params.outputs.max_series }}"
+      - name: Validate functional ingest
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("output/bro_smoke/bundle/ingest_manifest.json")
+          if not path.exists():
+              raise SystemExit("Missing ingest_manifest.json")
+          manifest = json.loads(path.read_text(encoding="utf-8"))
+          counts = manifest["counts"]
+          print(json.dumps(counts, indent=2))
+          if counts["selected_series"] <= 0:
+              raise SystemExit("No GLD series selected")
+          if counts["observations"] <= 0:
+              raise SystemExit("No GLD observations parsed")
+          if counts["failures"] != 0:
+              raise SystemExit(f"BRO ingest failures: {counts['failures']}")
+          PY
       - name: Show manifest
         if: always()
         run: |
-          if [[ -f output/bro_smoke/manifest.json ]]; then cat output/bro_smoke/manifest.json; fi
+          if [[ -f output/bro_smoke/bundle/ingest_manifest.json ]]; then cat output/bro_smoke/bundle/ingest_manifest.json; fi
           find output/bro_smoke -maxdepth 3 -type f -print 2>/dev/null || true
       - name: Upload reproducible ingest artifact
         if: always()
