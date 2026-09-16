@@ -4,11 +4,11 @@ Research software for diagnosing and, only where justified, combining informatio
 
 ## Status
 
-**Status A-light diagnostic research software.** The repository implements TS01–TS06 as an admitted diagnostic/ingest baseline and is qualifying TS07 for freatic monitoring-tube screening. It does **not** yet contain an admitted WDM fusion or correction model.
+**Status A-light diagnostic research software.** The repository implements TS01–TS06 as an admitted diagnostic/ingest baseline. TS07 Stage A is qualified for real-data freatic candidate screening; Stage B final freatic admission remains evidence-dependent and fail-closed. The repository does **not** yet contain an admitted WDM fusion or correction model.
 
 TS06 has been technically qualified against the live public BRO/PDOK services through GitHub Actions. This qualifies data ingestion, not the hydrological suitability or independence of automatically selected monitoring tubes. See [`docs/qualification/LIVE_BRO_QUALIFICATION.md`](docs/qualification/LIVE_BRO_QUALIFICATION.md).
 
-TS07 separates a reproducible BRO-only **candidate pre-screen** from actual scientific freatic admission. A shallow candidate is not automatically declared freatic, and a deep screen is not automatically declared non-freatic. See the `FREATIC_SCREENING_*` documents in `docs/qualification/`.
+TS07 separates a reproducible BRO-only **candidate pre-screen** from actual scientific freatic admission. A shallow candidate is not automatically declared freatic, and a deep screen is not automatically declared non-freatic. See the `FREATIC_SCREENING_*` documents and [`docs/qualification/TS07_CHECKPOINT.md`](docs/qualification/TS07_CHECKPOINT.md).
 
 The scientific documentation is deliberately separated into:
 
@@ -19,6 +19,7 @@ The scientific documentation is deliberately separated into:
 - [`docs/STATUS_A_LIGHT.md`](docs/STATUS_A_LIGHT.md)
 - [`docs/architecture/TRACEABILITY.md`](docs/architecture/TRACEABILITY.md)
 - [`docs/qualification/TS01_TS06_CHECKPOINT.md`](docs/qualification/TS01_TS06_CHECKPOINT.md)
+- [`docs/qualification/TS07_CHECKPOINT.md`](docs/qualification/TS07_CHECKPOINT.md)
 
 ## Install and test
 
@@ -27,7 +28,7 @@ python -m pip install -e . pytest
 pytest -q
 ```
 
-The TS07 branch baseline is 22 tests.
+The TS07 qualification baseline is **23 tests**.
 
 ## Main commands
 
