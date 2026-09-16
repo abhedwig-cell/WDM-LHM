@@ -4,9 +4,11 @@ Research software for diagnosing and, only where justified, combining informatio
 
 ## Status
 
-**Status A-light bootstrap / diagnostic research software.** The repository currently implements TS01–TS06: paired time-series diagnostics, multiwell observation operators, regime and process diagnostics, real-data admission, and BRO/PDOK ingestion. It does **not** yet contain an admitted WDM fusion or correction model.
+**Status A-light diagnostic research software.** The repository implements TS01–TS06 as an admitted diagnostic/ingest baseline. TS07 Stage A is qualified for real-data freatic candidate screening; Stage B final freatic admission remains evidence-dependent and fail-closed. The repository does **not** yet contain an admitted WDM fusion or correction model.
 
 TS06 has been technically qualified against the live public BRO/PDOK services through GitHub Actions. This qualifies data ingestion, not the hydrological suitability or independence of automatically selected monitoring tubes. See [`docs/qualification/LIVE_BRO_QUALIFICATION.md`](docs/qualification/LIVE_BRO_QUALIFICATION.md).
+
+TS07 separates a reproducible BRO-only **candidate pre-screen** from actual scientific freatic admission. A shallow candidate is not automatically declared freatic, and a deep screen is not automatically declared non-freatic. See the `FREATIC_SCREENING_*` documents and [`docs/qualification/TS07_CHECKPOINT.md`](docs/qualification/TS07_CHECKPOINT.md).
 
 The scientific documentation is deliberately separated into:
 
@@ -17,6 +19,7 @@ The scientific documentation is deliberately separated into:
 - [`docs/STATUS_A_LIGHT.md`](docs/STATUS_A_LIGHT.md)
 - [`docs/architecture/TRACEABILITY.md`](docs/architecture/TRACEABILITY.md)
 - [`docs/qualification/TS01_TS06_CHECKPOINT.md`](docs/qualification/TS01_TS06_CHECKPOINT.md)
+- [`docs/qualification/TS07_CHECKPOINT.md`](docs/qualification/TS07_CHECKPOINT.md)
 
 ## Install and test
 
@@ -25,7 +28,7 @@ python -m pip install -e . pytest
 pytest -q
 ```
 
-The current bootstrap baseline is 17 tests.
+The TS07 qualification baseline is **23 tests**.
 
 ## Main commands
 
@@ -54,12 +57,29 @@ BRO/PDOK ingest:
 ```bash
 wdm-lhm bro-ingest output/bro_pilot \
   --bbox 5.60,51.94,5.75,52.02 \
-  --min-observations 100 \
+  --min-catalog-observations 1 \
   --min-span-days 730 \
   --max-series 25
 ```
 
-A GitHub Actions workflow provides live BRO execution so results do not depend on the network restrictions of a chat/container environment.
+`--min-catalog-observations` refers to BRO GLD **Observatie entities**, not individual time-value measurements. One Observatie can contain an entire measurement series. Scientific minimum measurement counts are therefore applied after download by TS07. The older `bro-ingest --min-observations` spelling remains an alias for backwards compatibility.
+
+Conservative BRO-only freatic pre-screen:
+
+```bash
+wdm-lhm freatic-prescreen \
+  output/bro_pilot/bundle/stations.csv \
+  output/bro_pilot/bundle/observations.csv \
+  output/freatic_screen \
+  --min-observations 100 \
+  --min-span-days 730
+```
+
+Here `--min-observations` really does mean the minimum number of parsed individual GLD time-value measurements.
+
+The pre-screen writes `freatic_prescreen.csv`, `vertical_head_pairs.csv` and a manifest. `CANDIDATE_FREATIC` means candidate for further evidence-based admission, not final proof of a freatic connection.
+
+GitHub Actions workflows provide live BRO execution and TS07 screening so results do not depend on the network restrictions of a chat/container environment.
 
 ## Scientific guardrail
 
