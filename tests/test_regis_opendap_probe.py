@@ -1,39 +1,44 @@
 from pathlib import Path
 
 from wdm_lhm.regis_opendap_probe import (
+    REGIS_OPENDAP_ROOT,
     RegisOpendapProbeConfig,
     normalize_dataset_url,
     probe_regis_opendap,
 )
 
 
+def test_default_root_uses_tls_valid_www_host():
+    assert REGIS_OPENDAP_ROOT == "https://www.dinodata.nl/opendap/"
+    assert RegisOpendapProbeConfig().root_url == REGIS_OPENDAP_ROOT
+
+
 def test_normalize_dataset_url_accepts_dap_metadata_links():
-    base = "https://dinodata.nl/opendap/REGIS/REGIS_v02r2s3.nc"
+    base = "https://www.dinodata.nl/opendap/REGIS/REGIS.nc"
     assert normalize_dataset_url(base) == base
     assert normalize_dataset_url(base + ".html") == base
     assert normalize_dataset_url(base + ".dds") == base
     assert normalize_dataset_url(base + ".das") == base
-    assert normalize_dataset_url("https://dinodata.nl/opendap/REGIS/") is None
+    assert normalize_dataset_url("https://www.dinodata.nl/opendap/REGIS/") is None
 
 
 def test_probe_discovers_metadata_without_value_requests(tmp_path: Path):
-    root = "https://dinodata.nl/opendap/"
-    redirected_root = "https://www.dinodata.nl/opendap/"
-    dataset = redirected_root + "REGIS/REGIS_v02r2s3.nc"
+    root = "https://www.dinodata.nl/opendap/"
+    dataset = root + "REGIS/REGIS.nc"
     responses = {
         root: (
-            b'<a href="https://www.dinodata.nl/opendap/REGIS/">REGIS</a>'
+            b'<a href="REGIS/">REGIS</a>'
             b'<a href="https://outside.invalid/opendap/REGIS/">outside</a>',
             {"content-type": "text/html"},
-            redirected_root,
+            root,
         ),
-        redirected_root + "REGIS/": (
-            b'<a href="REGIS_v02r2s3.nc.html">REGIS II</a>',
+        root + "REGIS/": (
+            b'<a href="REGIS.nc.html">REGIS II</a>',
             {"content-type": "text/html"},
-            redirected_root + "REGIS/",
+            root + "REGIS/",
         ),
         dataset + ".dds": (
-            b"Dataset { Float32 top[layer=132][y=10][x=10]; } regis;",
+            b"Dataset { Float32 top[layer=132][y=10][x=10]; } REGIS.nc;",
             {"content-type": "text/plain"},
             dataset + ".dds",
         ),

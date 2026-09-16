@@ -11,7 +11,7 @@ import json
 import re
 
 
-REGIS_OPENDAP_ROOT = "https://dinodata.nl/opendap/"
+REGIS_OPENDAP_ROOT = "https://www.dinodata.nl/opendap/"
 _DATASET_EXTENSIONS = (".nc", ".nc4", ".cdf")
 _METADATA_SUFFIXES = (".html", ".dds", ".das", ".info")
 
