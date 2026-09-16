@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wdm-lhm"
-version = "0.7.0"
-description = "Freatic screening, real-data admission and process-aware groundwater diagnostics for LHM/MODFLOW and WDM research"
+version = "0.8.0"
+description = "Freatic screening, hydrogeological evidence acquisition and process-aware groundwater diagnostics for LHM/MODFLOW and WDM research"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24", "pandas>=2.0", "scipy>=1.10", "matplotlib>=3.7", "pyproj>=3.5"]
 
 [project.scripts]
 wdm-lhm = "wdm_lhm.cli:main"
+wdm-lhm-regis-probe = "wdm_lhm.regis_probe_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
