@@ -1,4 +1,5 @@
 import json
+import pandas as pd
 
 from wdm_lhm.bro_ingest import BROIngestConfig, ingest_bro_groundwater, parse_gld_compact_csv
 
@@ -15,6 +16,22 @@ def test_parse_gld_compact_csv_dutch_columns():
     assert len(out) == 2
     assert abs(out.iloc[0].obs_head_mnap - 7.123) < 1e-9
     assert out.iloc[0].station_id == "GMWX_T1"
+
+
+def test_parse_gld_compact_csv_live_headerless_format():
+    payload = (
+        ',,,,,\n'
+        '"1975-02-28T12:00:00+01:00","6.550","goedgekeurd",,,"discontinu"\n'
+        '"1975-03-14T12:00:00+01:00","6.660","goedgekeurd",,,"discontinu"\n'
+        ',,,,,\n'
+    ).encode()
+    out = parse_gld_compact_csv(
+        payload, gld_bro_id="GLD000000002815", station_id="GMW000000004104_T1", series_class="fully_assessed"
+    )
+    assert len(out) == 2
+    assert out.iloc[0]["obs_head_mnap"] == 6.55
+    assert out.iloc[1]["obs_head_mnap"] == 6.66
+    assert out.iloc[0]["date"] == pd.Timestamp("1975-02-28 12:00:00")
 
 
 def test_ingest_relational_join_cache_and_lineage(tmp_path):
