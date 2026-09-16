@@ -29,7 +29,9 @@ def test_catalog_observation_entities_are_not_measurement_points(tmp_path):
         "series_fully_assessed_csv_url": "https://example.test/gld999.csv",
     })], "links": []}
 
-    dates = pd.date_range("2020-01-01", "2022-12-31", periods=120)
+    # Use one stable timestamp representation throughout. 120 weekly values span
+    # more than the 730-day scientific Stage-A requirement.
+    dates = pd.date_range("2020-01-01", periods=120, freq="7D")
     lines = ["tijdstip meting;waterstand"]
     lines += [f"{d.isoformat()}+01:00;{7.0 + 0.1 * ((i % 10) / 10):.3f}" for i, d in enumerate(dates)]
     gld_csv = ("\n".join(lines) + "\n").encode()
@@ -58,4 +60,5 @@ def test_catalog_observation_entities_are_not_measurement_points(tmp_path):
         FreaticScreeningConfig(min_observations=100, min_span_days=730),
     )
     assert screen.iloc[0]["n_observations"] == 120
+    assert screen.iloc[0]["record_span_days"] >= 730
     assert screen.iloc[0]["prescreen_verdict"] == "CANDIDATE_FREATIC"
