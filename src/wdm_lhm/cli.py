@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import pandas as pd
 from .pipeline import run_station
 from .synthetic import make_synthetic
 from .synthetic_multi import make_multiwell_demo
@@ -12,6 +13,7 @@ from .regime_analysis import RegimeConfig
 from .process_diagnosis import ProcessConfig
 from .admission import AdmissionConfig, admit_bundle
 from .bro_ingest import BROIngestConfig, ingest_bro_groundwater
+from .freatic_screening import FreaticScreeningConfig, freatic_prescreen, vertical_head_pair_evidence
 
 
 def main() -> None:
@@ -69,6 +71,16 @@ def main() -> None:
     p_bro.add_argument("--include-unknown-series", action="store_true")
     p_bro.add_argument("--only-tubes-in-use", action="store_true")
     p_bro.add_argument("--force", action="store_true", help="Ignore cached source bytes")
+
+    p_freatic = sub.add_parser("freatic-prescreen", help="Create conservative BRO-only freatic candidate evidence")
+    p_freatic.add_argument("stations")
+    p_freatic.add_argument("observations")
+    p_freatic.add_argument("output")
+    p_freatic.add_argument("--min-observations", type=int, default=100)
+    p_freatic.add_argument("--min-span-days", type=int, default=730)
+    p_freatic.add_argument("--legacy-max-screen-bottom-depth-m", type=float, default=5.0)
+    p_freatic.add_argument("--allow-non-fully-assessed-candidate", action="store_true")
+    p_freatic.add_argument("--vertical-min-overlap-days", type=int, default=30)
 
     p_demo_multi = sub.add_parser("demo-multi", help="Create and run a synthetic multiwell demonstration")
     p_demo_multi.add_argument("output")
@@ -129,6 +141,30 @@ def main() -> None:
             flux_metadata_path=args.flux_metadata, run_metadata_path=args.run_metadata, config=acfg,
         )
         print(result["verdict"])
+    elif args.command == "freatic-prescreen":
+        out = Path(args.output)
+        out.mkdir(parents=True, exist_ok=True)
+        stations = pd.read_csv(args.stations)
+        observations = pd.read_csv(args.observations)
+        fcfg = FreaticScreeningConfig(
+            min_observations=args.min_observations,
+            min_span_days=args.min_span_days,
+            legacy_max_screen_bottom_depth_m=args.legacy_max_screen_bottom_depth_m,
+            require_fully_assessed_for_candidate=not args.allow_non_fully_assessed_candidate,
+        )
+        screen = freatic_prescreen(stations, observations, fcfg)
+        vertical = vertical_head_pair_evidence(
+            stations, observations, min_overlap_days=args.vertical_min_overlap_days
+        )
+        screen.to_csv(out / "freatic_prescreen.csv", index=False)
+        vertical.to_csv(out / "vertical_head_pairs.csv", index=False)
+        summary = {
+            "config": fcfg.as_dict(),
+            "counts": screen["prescreen_verdict"].value_counts(dropna=False).to_dict(),
+            "vertical_pairs": int(len(vertical)),
+        }
+        (out / "freatic_prescreen_manifest.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        print(json.dumps(summary, indent=2))
     else:
         out = Path(args.output)
         inp = out / "inputs"
