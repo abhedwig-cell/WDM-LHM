@@ -1,0 +1,123 @@
+name: REGIS recursive archive inventory
+
+on:
+  pull_request:
+    types: [ready_for_review]
+    paths:
+      - "src/wdm_lhm/regis_recursive_inventory.py"
+      - "src/wdm_lhm/regis_recursive_inventory_cli.py"
+      - "tests/test_regis_recursive_inventory.py"
+      - "docs/qualification/STAGE_B_REGIS_RECURSIVE_INVENTORY.md"
+      - ".github/workflows/regis-recursive-inventory.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recursive-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+
+      - name: Record source headers and runner capacity
+        run: |
+          mkdir -p output/regis_recursive
+          df -h / /tmp | tee output/regis_recursive/runner_disk_before.txt
+          curl --fail --silent --show-error --location --head \
+            https://service.pdok.nl/tno/bro-regis-ii/atom/downloads/brohgm.zip \
+            > output/regis_recursive/source_headers.txt
+
+      - name: Resumably download current REGIS delivery to ephemeral runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://service.pdok.nl/tno/bro-regis-ii/atom/downloads/brohgm.zip"
+          target="/tmp/brohgm.zip"
+          success=0
+          for attempt in 1 2 3 4 5 6; do
+            echo "Download attempt ${attempt}; existing bytes: $(stat -c%s "$target" 2>/dev/null || echo 0)"
+            if curl --fail --location --show-error \
+              --connect-timeout 30 \
+              --retry 2 --retry-all-errors --retry-delay 5 \
+              --continue-at - --output "$target" "$url"; then
+              success=1
+              break
+            fi
+            sleep 5
+          done
+          if [[ "$success" != "1" ]]; then
+            echo "REGIS download did not complete after resumable attempts" >&2
+            exit 1
+          fi
+          python - <<'PY'
+          import zipfile
+          from pathlib import Path
+          p = Path('/tmp/brohgm.zip')
+          print('Downloaded bytes:', p.stat().st_size)
+          if p.stat().st_size < 1_000_000_000:
+              raise SystemExit('Downloaded REGIS delivery is unexpectedly small')
+          if not zipfile.is_zipfile(p):
+              raise SystemExit('Downloaded REGIS delivery is not a valid ZIP')
+          PY
+
+      - name: Recursively inventory ZIP containers only
+        run: |
+          python -m wdm_lhm.regis_recursive_inventory_cli \
+            /tmp/brohgm.zip output/regis_recursive \
+            --max-depth 6 \
+            --max-containers 32 \
+            --max-total-zip-gib 8
+
+      - name: Validate bounded recursive evidence and remove source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path('output/regis_recursive/regis_recursive_inventory_manifest.json')
+          if not p.exists():
+              raise SystemExit('Missing recursive inventory manifest')
+          m = json.loads(p.read_text(encoding='utf-8'))
+          print(json.dumps(m, indent=2))
+          inv = m['inventory']
+          guard = m['guardrails']
+          if inv['container_count'] < 3:
+              raise SystemExit('Recursive inventory did not reach the known third archive level')
+          if inv['max_archive_depth_reached'] < 2:
+              raise SystemExit('Recursive inventory stopped before archive depth 2')
+          if inv['terminal_archive_count'] < 1:
+              raise SystemExit('No terminal archive reached')
+          if inv['depth_limited_zip_member_count'] != 0:
+              raise SystemExit('Recursive inventory is incomplete because max_depth was reached')
+          if guard['nonzip_members_extracted'] != 0:
+              raise SystemExit('Guardrail violation: non-ZIP member extraction reported')
+          if guard['interpretation_performed'] or guard['admission_decision_performed']:
+              raise SystemExit('Inventory workflow performed out-of-scope interpretation/admission')
+          for f in Path('output/regis_recursive').iterdir():
+              if f.is_file() and f.stat().st_size > 50 * 1024 * 1024:
+                  raise SystemExit(f'Evidence file exceeds 50 MB guardrail: {f}')
+          PY
+          rm -f /tmp/brohgm.zip
+          df -h / /tmp | tee output/regis_recursive/runner_disk_after.txt
+          test ! -e /tmp/brohgm.zip
+
+      - name: Upload compact recursive inventory evidence only
+        uses: actions/upload-artifact@v4
+        with:
+          name: regis-recursive-inventory-${{ github.run_id }}
+          path: output/regis_recursive/
+          if-no-files-found: error
+          retention-days: 14
