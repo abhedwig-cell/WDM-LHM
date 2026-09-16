@@ -1,0 +1,4 @@
+variable,unit,sign_convention,process,source,temporal_support
+drain_flux_mm_d,mm/d,positive_out_of_groundwater,drainage,MODFLOW budget term,daily mean
+river_flux_mm_d,mm/d,positive_out_of_groundwater,river_exchange,MODFLOW budget term,daily mean
+recharge_mm_d,mm/d,positive_into_groundwater,recharge,MetaSWAP/LHM coupling,daily total
