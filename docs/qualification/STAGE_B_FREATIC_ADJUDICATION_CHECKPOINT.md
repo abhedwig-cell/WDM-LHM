@@ -1,6 +1,6 @@
 # Stage-B freatic adjudication checkpoint
 
-Status: **DESIGN_READY_FOR_QUALIFICATION**
+Status: **IMPLEMENTED_PENDING_CI**
 
 Date: 2026-09-17
 
@@ -8,78 +8,77 @@ Date: 2026-09-17
 
 `STAGE_B_FREATIC_ADJUDICATION`
 
-Phase: DESIGN / pre-implementation qualification.
+Phase: QUALIFY, implementation prepared; ordinary CI still required on the implementation head.
 
 ## Canonical source
 
 - canonical main at workunit start: `fabbace765c34cf04a99267b55be908f83c58fde`;
 - branch: `work/stage-b-freatic-adjudication`;
-- branch started exactly from canonical main after PR #9 merge.
+- design checkpoint commit: `81444df354235063c3fe05066b84d315b55c8eaa`.
 
 ## Reused immutable evidence
 
 - TS07 Stage A: `QUALIFIED_STAGE_A_REAL_DATA`;
-- GMW000000004074 direct and same-GMW multi-filter evidence from `docs/qualification/TS07_CHECKPOINT.md`;
-- GMW000000004104 direct and same-GMW multi-filter evidence from the same checkpoint;
+- GMW000000004074 and GMW000000004104 direct/multi-filter evidence from `docs/qualification/TS07_CHECKPOINT.md`;
 - REGIS v02r2s3 package identity and 100 x 100 m support;
 - qualified parsed hydro JSON SHA-256: `155db35ac5d7fde4c5ad28e50b7ed3f055b59124e9dcbf4949e110683be3e5c8`;
 - qualified geometry workflow `35181574136`, artifact `10480936971`, digest `a14fae5625735623da63ba37267ccd46b07a8534976875088f956559a2062391`;
 - explicit 4074 nominal/west-neighbour sensitivity;
-- BRO ground level authority for screen elevations.
+- BRO ground-level authority for screen elevations.
 
 No live REGIS acquisition was repeated.
 
-## Design changes
+## Design admitted for implementation
 
-The Stage-B documentation now fixes:
+The documentation fixes:
 
-- explicit evidence precedence: direct observations -> same-location multi-filter -> construction metadata -> regional hydrogeological context -> legacy heuristics;
-- four hydraulic adjudication states: `ADMISSIBLE_FREATIC`, `NOT_ADMISSIBLE_FREATIC`, `REVIEW_REQUIRED`, `INSUFFICIENT_EVIDENCE`;
-- positive evidence requirements for `ADMISSIBLE_FREATIC`;
-- fail-closed treatment of contradiction, scale sensitivity and unknown evidence;
-- formal separation of physical freatic adjudication from LHM-validation lineage independence;
-- 4074/4104 qualification and falsification cases;
-- continued exclusion of REGIS `freatisch` and lineage-coupled `kD` as independent validation evidence.
+- evidence precedence: direct observations -> same-location multi-filter -> construction metadata -> regional hydrogeological context -> legacy heuristics;
+- `ADMISSIBLE_FREATIC`, `NOT_ADMISSIBLE_FREATIC`, `REVIEW_REQUIRED`, `INSUFFICIENT_EVIDENCE`;
+- positive evidence requirements for admission;
+- fail-closed contradiction/scale-sensitivity handling;
+- separate hydraulic adjudication and validation-lineage gates;
+- four real-data qualification/falsification cases.
 
-No numeric score, universal vertical-head threshold or production classifier is introduced.
+## Implementation delta
 
-## Qualification oracle
+Added `src/wdm_lhm/freatic_adjudication.py` with:
 
-`docs/qualification/STAGE_B_FREATIC_ADJUDICATION_QUALIFICATION.md` fixes the required safety outcomes:
+- typed evidence and output enums/dataclasses;
+- no numeric score;
+- no conversion of REGIS codes or numerical head differences into hydraulic meaning;
+- qualitative precedence logic only;
+- default-disabled automatic `ADMISSIBLE_FREATIC` path through `allow_admissible=False`;
+- separate validation-lineage eligibility operator.
 
-- 4104 Tube 1: not admissible, intended `NOT_ADMISSIBLE_FREATIC`;
-- 4104 Tube 2: not admissible, intended `NOT_ADMISSIBLE_FREATIC`;
-- 4074 Tube 1: `REVIEW_REQUIRED` under current evidence;
-- 4074 Tube 2: not admissible, intended `NOT_ADMISSIBLE_FREATIC`.
+Added `tests/test_freatic_adjudication.py` with pinned safety tests for:
 
-The oracle deliberately preserves the statement that 4074 Tube 1 is more plausible than Tube 2 without promoting it to an independently validated freatic observation.
+- 4104 Tube 1 -> `NOT_ADMISSIBLE_FREATIC`;
+- 4104 Tube 2 -> `NOT_ADMISSIBLE_FREATIC`;
+- 4074 Tube 1 -> `REVIEW_REQUIRED`;
+- 4074 Tube 2 -> `NOT_ADMISSIBLE_FREATIC`;
+- unknown evidence -> `INSUFFICIENT_EVIDENCE`;
+- legacy heuristic non-authority;
+- local-evidence precedence over regional instability;
+- positive-admission gate;
+- separation of hydraulic admission from validation lineage.
 
 ## Verdict
 
-**DESIGN_READY_FOR_QUALIFICATION**
+**IMPLEMENTED_PENDING_CI**
 
-The scientific decision surface is now explicit enough to implement a small evidence-record/adjudication contract without inventing a score.
-
-## Mutations
-
-- created branch `work/stage-b-freatic-adjudication` from canonical main;
-- updated Stage-B theory, conceptual model and formal decision model;
-- added real-data qualification/falsification oracle;
-- added this resumable checkpoint.
+No production expansion or positive automatic admission is permitted until ordinary repository CI passes on the implementation head.
 
 ## Exclusions
 
-This checkpoint does not permit:
-
-- expansion to all 280 GMWs;
-- LHM recalibration or WDM-conditioned correction;
-- residual regionalisation;
-- automatic use of Stage-A candidates as validation observations;
-- hydraulic interpretation from REGIS layer code alone;
-- neighbour-column averaging;
-- missing-value imputation;
-- a numeric adjudication score.
+- no expansion to all 280 GMWs;
+- no LHM recalibration or WDM-conditioned correction;
+- no residual regionalisation;
+- no score or universal vertical-head threshold;
+- no REGIS neighbour averaging;
+- no hydraulic semantics inferred from REGIS layer code;
+- no missing-value imputation;
+- no use of `freatisch` or lineage-coupled `kD` as independent validation evidence.
 
 ## Next permitted action
 
-Implement the smallest typed evidence-record and qualitative adjudication contract needed to express these states, with tests pinned to the four qualification cases. Production `ADMISSIBLE_FREATIC` must remain disabled unless its positive-evidence path is explicitly exercised by a separately qualified case.
+Run ordinary CI on the implementation head. If PASS with unchanged evidence dependencies, persist the CI run/head, update this checkpoint to a qualified verdict, update issue #4, and only then consider merge/admission of this bounded capability.
