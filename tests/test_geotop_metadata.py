@@ -39,8 +39,30 @@ DAS = """Attributes {
 
 def test_parse_dds_inventory():
     parsed = parse_dds(DDS)
+    assert parsed["dataset_name"] == "geotop"
     assert parsed["dimensions"] == {"x": 3, "y": 2, "z": 4}
     assert parsed["variables"]["strat"]["dimensions"][0] == {"name": "z", "size": 4}
+
+
+def test_identical_duplicate_coordinate_declarations_are_deduplicated():
+    repeated = DDS.replace(
+        "    Float64 y[y = 2];\n",
+        "    Float64 x[x = 3];\n    Float64 y[y = 2];\n",
+    )
+    parsed = parse_dds(repeated)
+    assert parsed["variables"]["x"] == {
+        "type": "Float64",
+        "dimensions": [{"name": "x", "size": 3}],
+    }
+
+
+def test_conflicting_duplicate_variable_fails_closed():
+    conflicting = DDS.replace(
+        "    Float64 y[y = 2];\n",
+        "    Float32 x[x = 3];\n    Float64 y[y = 2];\n",
+    )
+    with pytest.raises(ValueError, match="conflicting duplicate DDS variable"):
+        parse_dds(conflicting)
 
 
 def test_inconsistent_dimension_fails_closed():

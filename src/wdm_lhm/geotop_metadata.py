@@ -96,8 +96,6 @@ def parse_dds(text: str) -> dict:
         if not match:
             continue
         dtype, name, dims_text = match.groups()
-        if name in variables:
-            raise ValueError(f"duplicate DDS variable: {name}")
         dims: list[dict] = []
         for dim_name, size_text in _DDS_DIM.findall(dims_text):
             size = int(size_text)
@@ -110,7 +108,14 @@ def parse_dds(text: str) -> dict:
             dims.append({"name": dim_name, "size": size})
         if not dims:
             raise ValueError(f"DDS variable without parsed dimensions: {name}")
-        variables[name] = {"type": dtype, "dimensions": dims}
+
+        candidate = {"type": dtype, "dimensions": dims}
+        previous_variable = variables.get(name)
+        if previous_variable is not None:
+            if previous_variable != candidate:
+                raise ValueError(f"conflicting duplicate DDS variable: {name}")
+            continue
+        variables[name] = candidate
 
     for coordinate in ("x", "y", "z"):
         if coordinate not in variables:
