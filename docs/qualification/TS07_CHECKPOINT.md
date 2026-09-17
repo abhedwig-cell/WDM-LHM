@@ -6,6 +6,8 @@ Date: 2026-09-16
 
 Canonical branch under review: `work/freatic-screening-qualification`
 
+> **Supersession note, 2026-09-17.** The original qualification remains historical evidence for the Stage-A design and for the 4037/4074/4104 cases. A later qualified BRO row-assessment contract showed that five newer high-frequency `fully_assessed` series contained row-level `afgekeurd` and `onbeslist` values that the original parser did not retain. Their empirical summaries are superseded by `BRO_GLD_ASSESSMENT_STATUS_CHECKPOINT.md`. The 4074 and 4104 numerical evidence below is unchanged by that correction.
+
 ## Capability
 
 TS07 provides a conservative two-stage screening framework for selecting BRO monitoring tubes for use in WDM/LHM comparison.
