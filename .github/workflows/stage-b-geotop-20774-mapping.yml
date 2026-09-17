@@ -1,0 +1,89 @@
+name: Stage-B GeoTOP 20774 coordinate mapping
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/wdm_lhm/geotop_coordinate_mapping.py'
+      - 'src/wdm_lhm/geotop_coordinate_mapping_cli.py'
+      - 'src/wdm_lhm/geotop_coordinate_acquisition.py'
+      - 'src/wdm_lhm/geotop_metadata.py'
+      - 'tests/test_geotop_coordinate_mapping.py'
+      - '.github/workflows/stage-b-geotop-20774-mapping.yml'
+      - 'docs/qualification/STAGE_B_GEOTOP_20774_CHECKPOINT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mapping:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Reacquire qualified metadata only
+        run: |
+          python -m wdm_lhm.geotop_metadata_cli --output-dir stage_b_geotop_20774_mapping/metadata
+      - name: Reacquire qualified raw coordinate axes only
+        run: |
+          python -m wdm_lhm.geotop_coordinate_acquisition_cli --output-dir stage_b_geotop_20774_mapping/coordinates
+      - name: Qualify coordinate semantics and target mapping
+        run: |
+          python -m wdm_lhm.geotop_coordinate_mapping_cli \
+            --coordinate-file stage_b_geotop_20774_mapping/coordinates/geotop_coordinate_axes.ascii.txt \
+            --das-file stage_b_geotop_20774_mapping/metadata/geotop.das.txt \
+            --output-file stage_b_geotop_20774_mapping/geotop_coordinate_mapping_manifest.json
+      - name: Validate mapping-only boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('stage_b_geotop_20774_mapping/geotop_coordinate_mapping_manifest.json')
+          m = json.loads(p.read_text())
+          assert m['capability'] == 'STAGE_B_GEOTOP_20774_COORDINATE_MAPPING'
+          assert m['state'] == 'COORDINATE_MAPPING_QUALIFIED_NO_GEOLOGICAL_INTERPRETATION'
+          r = m['mapping']
+          assert r['axis_lengths'] == {'x': 2646, 'y': 2811, 'z': 313}
+          assert r['axis_spacing_m'] == {'x': '100', 'y': '100', 'z': '0.5'}
+          assert r['crs']['horizontal_epsg'] == 28992
+          assert r['horizontal_mapping']['x']['index_zero_based'] == 1586
+          assert r['horizontal_mapping']['x']['lower_boundary'] == '172200'
+          assert r['horizontal_mapping']['x']['upper_boundary'] == '172300'
+          assert r['horizontal_mapping']['y']['index_zero_based'] == 1092
+          assert r['horizontal_mapping']['y']['lower_boundary'] == '447700'
+          assert r['horizontal_mapping']['y']['upper_boundary'] == '447800'
+          assert r['boundary_sensitivity']['minimum_horizontal_boundary_distance_m'] == '18.021970'
+          assert r['boundary_sensitivity']['generic_near_boundary_threshold_used'] is False
+          assert r['z_summary_only']['screen_or_q95_correlation_performed'] is False
+          g = m['guardrails']
+          assert g['categorical_voxel_values_requested'] is False
+          assert g['strat_requested'] is False
+          assert g['lithok_requested'] is False
+          assert g['screen_correlation_performed'] is False
+          assert g['lithology_interpretation_performed'] is False
+          assert g['hydraulic_interpretation_performed'] is False
+          assert g['admission_decision_performed'] is False
+          assert g['allow_admissible_enabled'] is False
+          print({
+              'x_index': r['horizontal_mapping']['x']['index_zero_based'],
+              'y_index': r['horizontal_mapping']['y']['index_zero_based'],
+              'min_boundary_distance_m': r['boundary_sensitivity']['minimum_horizontal_boundary_distance_m'],
+              'crs': r['crs']['compound_crs_name'],
+          })
+          PY
+      - name: Upload mapping evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-geotop-20774-mapping-${{ github.run_id }}
+          path: stage_b_geotop_20774_mapping/
+          retention-days: 14
+          if-no-files-found: error
