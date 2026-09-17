@@ -135,6 +135,20 @@ def _normalize_col(s: str) -> str:
     return s
 
 
+def _clean_assessment_status(value):
+    if value is None or pd.isna(value):
+        return pd.NA
+    text = str(value).strip()
+    return text if text else pd.NA
+
+
+def _normalize_assessment_status(value):
+    raw = _clean_assessment_status(value)
+    if pd.isna(raw):
+        return pd.NA
+    return str(raw).casefold()
+
+
 def _read_csv_flexible(payload: bytes) -> pd.DataFrame:
     text = payload.decode("utf-8-sig", errors="replace")
     try:
@@ -174,10 +188,14 @@ def _read_headerless_compact_csv(payload: bytes) -> pd.DataFrame | None:
 
 def parse_gld_compact_csv(payload: bytes, *, gld_bro_id: str, station_id: str,
                           series_class: str) -> pd.DataFrame:
-    """Parse BRO compact GLD CSV into the TS01-TS05 observation contract."""
+    """Parse BRO compact GLD CSV while preserving row-level assessment provenance."""
+    output_columns = [
+        "date", "station_id", "obs_head_mnap", "gld_bro_id", "series_class",
+        "assessment_status_raw", "assessment_status", "source",
+    ]
     df = _read_csv_flexible(payload)
     if df.empty:
-        return pd.DataFrame(columns=["date", "station_id", "obs_head_mnap", "gld_bro_id", "series_class"])
+        return pd.DataFrame(columns=output_columns)
 
     norm = {_normalize_col(c): c for c in df.columns}
     time_candidates = [
@@ -188,12 +206,19 @@ def parse_gld_compact_csv(payload: bytes, *, gld_bro_id: str, station_id: str,
         "waterstand", "napstand", "grondwaterstand", "meetwaarde", "measurementvalue",
         "value", "waarde",
     ]
+    assessment_candidates = [
+        "statuskwaliteitscontrole", "kwaliteitscontrolestatus", "statusbeoordeling",
+        "beoordelingsstatus", "assessmentstatus", "qualitycontrolstatus",
+    ]
     tcol = next((norm[c] for c in time_candidates if c in norm), None)
     vcol = next((norm[c] for c in value_candidates if c in norm), None)
+    acol = next((norm[c] for c in assessment_candidates if c in norm), None)
     if tcol is not None and vcol is not None:
+        status_raw = df[acol] if acol is not None else pd.Series(pd.NA, index=df.index, dtype="object")
         out = pd.DataFrame({
             "date": pd.to_datetime(df[tcol], errors="coerce", utc=True),
             "obs_head_mnap": pd.to_numeric(df[vcol].astype(str).str.replace(",", ".", regex=False), errors="coerce"),
+            "assessment_status_raw": status_raw,
         }).dropna(subset=["date", "obs_head_mnap"])
     else:
         positional = _read_headerless_compact_csv(payload)
@@ -202,16 +227,25 @@ def parse_gld_compact_csv(payload: bytes, *, gld_bro_id: str, station_id: str,
                 "BRO GLD compact CSV schema not recognized; refusing heuristic value selection. "
                 f"columns={list(df.columns)}"
             )
+        status_raw = (
+            positional["field_2"]
+            if "field_2" in positional.columns
+            else pd.Series(pd.NA, index=positional.index, dtype="object")
+        )
         out = pd.DataFrame({
             "date": positional["__parsed_time"],
             "obs_head_mnap": positional["__parsed_value"],
+            "assessment_status_raw": status_raw,
         }).dropna(subset=["date", "obs_head_mnap"])
+
+    out["assessment_status_raw"] = out["assessment_status_raw"].map(_clean_assessment_status)
+    out["assessment_status"] = out["assessment_status_raw"].map(_normalize_assessment_status)
     out["date"] = out["date"].dt.tz_convert("Europe/Amsterdam").dt.tz_localize(None)
     out["station_id"] = station_id
     out["gld_bro_id"] = gld_bro_id
     out["series_class"] = series_class
     out["source"] = "BRO_GLD"
-    return out.sort_values("date").drop_duplicates(["station_id", "date"], keep="last")
+    return out[output_columns].sort_values("date").drop_duplicates(["station_id", "date"], keep="last")
 
 
 def _pick_series_url(row: pd.Series, cfg: BROIngestConfig) -> tuple[str | None, str | None]:
@@ -342,9 +376,17 @@ def ingest_bro_groundwater(output_dir: str | Path, config: BROIngestConfig,
         except Exception as exc:
             failures.append({"gld_bro_id": s.get("gld_bro_id"), "station_id": s.get("station_id"), "stage": "download_or_parse_series", "error": f"{type(exc).__name__}: {exc}"})
 
-    obs = pd.concat(observations, ignore_index=True) if observations else pd.DataFrame(columns=["date", "station_id", "obs_head_mnap", "gld_bro_id", "series_class", "source"])
+    obs = pd.concat(observations, ignore_index=True) if observations else pd.DataFrame(columns=[
+        "date", "station_id", "obs_head_mnap", "gld_bro_id", "series_class",
+        "assessment_status_raw", "assessment_status", "source",
+    ])
     obs.to_csv(bundle / "observations.csv", index=False)
     pd.DataFrame(failures).to_csv(bundle / "ingest_failures.csv", index=False)
+
+    assessment_status_counts: dict[str, int] = {}
+    if "assessment_status" in obs.columns:
+        statuses = obs["assessment_status"].astype("string").fillna("<missing>")
+        assessment_status_counts = {str(k): int(v) for k, v in statuses.value_counts().items()}
 
     manifest = {
         "capability": "TS06_BRO_INGEST",
@@ -359,6 +401,8 @@ def ingest_bro_groundwater(output_dir: str | Path, config: BROIngestConfig,
             "observations": int(len(obs)),
             "failures": int(len(failures)),
         },
+        "assessment_status_counts": assessment_status_counts,
+        "assessment_status_policy": "row-level BRO assessment is preserved at ingest; scientific eligibility is decided downstream and missing status is never assumed approved",
         "lineage_policy": "used_in_wdm and used_in_lhm_calibration remain unknown until audited; heldout_group remains unknown until study design",
         "qualification_boundary": "BRO/PDOK ingest only; no assertion that selected tubes represent the phreatic water table and no LHM comparison yet",
     }
