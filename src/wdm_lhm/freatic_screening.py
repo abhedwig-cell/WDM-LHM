@@ -19,6 +19,9 @@ ADMISSION_VERDICTS = {
     "NOT_ADMISSIBLE_FREATIC",
     "INSUFFICIENT_DATA",
 }
+APPROVED_ASSESSMENT_STATUS = "goedgekeurd"
+REJECTED_ASSESSMENT_STATUS = "afgekeurd"
+UNDECIDED_ASSESSMENT_STATUS = "onbeslist"
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,49 @@ def _series_class(obs: pd.DataFrame, station_row: pd.Series) -> str | None:
     return None
 
 
+def _normalized_assessment_status(obs: pd.DataFrame) -> pd.Series:
+    if "assessment_status" not in obs.columns:
+        return pd.Series(pd.NA, index=obs.index, dtype="string")
+    values = obs["assessment_status"].astype("string").str.strip().str.casefold()
+    return values.mask(values == "", pd.NA)
+
+
+def _select_scientific_observations(obs: pd.DataFrame, series_class: str | None) -> tuple[pd.DataFrame, dict[str, int | bool]]:
+    """Select rows eligible for scientific evidence without deleting provenance.
+
+    For a fully assessed BRO series only rows explicitly marked `goedgekeurd`
+    are eligible. Rejected, undecided and unknown rows remain present in the
+    input bundle but are not positive scientific evidence. Other series classes
+    retain their existing behaviour in this bounded workunit.
+    """
+
+    statuses = _normalized_assessment_status(obs)
+    status_available = "assessment_status" in obs.columns
+    approved = statuses.eq(APPROVED_ASSESSMENT_STATUS).fillna(False)
+    rejected = statuses.eq(REJECTED_ASSESSMENT_STATUS).fillna(False)
+    undecided = statuses.eq(UNDECIDED_ASSESSMENT_STATUS).fillna(False)
+    unknown = statuses.isna()
+    recognized = approved | rejected | undecided | unknown
+    other = ~recognized
+
+    stats: dict[str, int | bool] = {
+        "raw_count": int(len(obs)),
+        "approved_count": int(approved.sum()),
+        "rejected_count": int(rejected.sum()),
+        "undecided_count": int(undecided.sum()),
+        "unknown_count": int(unknown.sum()),
+        "other_count": int(other.sum()),
+        "status_available": bool(status_available),
+    }
+
+    if series_class == "fully_assessed":
+        selected = obs.loc[approved].copy()
+    else:
+        selected = obs.copy()
+    stats["eligible_count"] = int(len(selected))
+    return selected, stats
+
+
 def freatic_prescreen(
     stations: pd.DataFrame,
     observations: pd.DataFrame,
@@ -89,8 +135,19 @@ def freatic_prescreen(
     rows: list[dict] = []
     for _, st in stations.iterrows():
         sid = str(st["station_id"])
-        so = obs[obs["station_id"].astype(str) == sid].dropna(subset=["date", "obs_head_mnap"]).copy()
+        so_raw = obs[obs["station_id"].astype(str) == sid].dropna(subset=["date", "obs_head_mnap"]).copy()
         reasons: list[str] = []
+
+        series_class = _series_class(so_raw, st)
+        so, quality = _select_scientific_observations(so_raw, series_class)
+        if series_class == "fully_assessed":
+            if not bool(quality["status_available"]):
+                reasons.append("ROW_ASSESSMENT_STATUS_UNAVAILABLE")
+            excluded = int(quality["raw_count"]) - int(quality["eligible_count"])
+            if excluded > 0:
+                reasons.append("NON_APPROVED_ROWS_EXCLUDED")
+            if int(quality["other_count"]) > 0:
+                reasons.append("UNRECOGNIZED_ASSESSMENT_STATUS_EXCLUDED")
 
         ground = pd.to_numeric(pd.Series([st.get("ground_level_mnap")]), errors="coerce").iloc[0]
         ztop = pd.to_numeric(pd.Series([st.get("screen_top_position_mnap")]), errors="coerce").iloc[0]
@@ -124,7 +181,6 @@ def freatic_prescreen(
             q05, q50, q95 = [float(depths.quantile(p)) for p in (0.05, 0.50, 0.95)]
             above_ground_fraction = float((depths < 0).mean())
 
-        series_class = _series_class(so, st)
         fully_assessed = series_class == "fully_assessed"
         if cfg.require_fully_assessed_for_candidate and not fully_assessed:
             reasons.append("SERIES_NOT_UNIQUELY_FULLY_ASSESSED")
@@ -161,7 +217,13 @@ def freatic_prescreen(
             "gld_bro_id": st.get("gld_bro_id"),
             "screen_top_depth_m": screen_top_depth,
             "screen_bottom_depth_m": screen_bottom_depth,
+            "n_observations_raw": int(quality["raw_count"]),
             "n_observations": n,
+            "n_assessment_approved": int(quality["approved_count"]),
+            "n_assessment_rejected": int(quality["rejected_count"]),
+            "n_assessment_undecided": int(quality["undecided_count"]),
+            "n_assessment_unknown": int(quality["unknown_count"]),
+            "n_assessment_other": int(quality["other_count"]),
             "record_span_days": span_days,
             "q05_depth_m": q05,
             "q50_depth_m": q50,
@@ -189,6 +251,7 @@ def vertical_head_pair_evidence(
 
     No universal significance threshold is applied. The output is evidence for
     later hydrogeological interpretation, not an automatic rejection decision.
+    Row-level BRO assessment status is applied before daily aggregation.
     """
 
     req_s = {"station_id", "gmw_bro_id", "ground_level_mnap", "screen_top_position_mnap", "screen_bottom_position_mnap"}
@@ -198,8 +261,20 @@ def vertical_head_pair_evidence(
 
     obs = observations.copy()
     obs["date"] = pd.to_datetime(obs["date"], errors="coerce")
-    obs["day"] = obs["date"].dt.floor("D")
     obs["obs_head_mnap"] = pd.to_numeric(obs["obs_head_mnap"], errors="coerce")
+
+    eligible_parts: list[pd.DataFrame] = []
+    for _, station_group in obs.dropna(subset=["date", "obs_head_mnap"]).groupby("station_id", sort=False):
+        series_class = _series_class(station_group, pd.Series(dtype="object"))
+        selected, _ = _select_scientific_observations(station_group, series_class)
+        if not selected.empty:
+            eligible_parts.append(selected)
+    if eligible_parts:
+        obs = pd.concat(eligible_parts, ignore_index=True)
+    else:
+        obs = obs.iloc[0:0].copy()
+
+    obs["day"] = obs["date"].dt.floor("D")
     daily = obs.dropna(subset=["day", "obs_head_mnap"]).groupby(["station_id", "day"], as_index=False)["obs_head_mnap"].median()
 
     out: list[dict] = []
