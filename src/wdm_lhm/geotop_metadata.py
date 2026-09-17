@@ -17,6 +17,10 @@ _DDS_VAR = re.compile(
     r"([A-Za-z_][A-Za-z0-9_]*)\s*((?:\[[^\]]+\])+?)\s*;\s*$"
 )
 _DDS_DIM = re.compile(r"\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\d+)\s*\]")
+_DDS_ENVELOPE = re.compile(
+    r"^\s*Dataset\s*\{(?P<body>.*)\}\s*(?P<dataset>[A-Za-z0-9_.-]+)\s*;\s*$",
+    re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -81,12 +85,13 @@ def _validate_final_url(requested_url: str, final_url: str) -> None:
 
 
 def parse_dds(text: str) -> dict:
-    if not text.strip().startswith("Dataset {") or not text.rstrip().endswith("geotop;"):
-        raise ValueError("GeoTOP DDS does not have expected Dataset envelope")
+    envelope = _DDS_ENVELOPE.match(text)
+    if not envelope:
+        raise ValueError("GeoTOP DDS does not have expected DAP2 Dataset envelope")
 
     variables: dict[str, dict] = {}
     dimensions: dict[str, int] = {}
-    for line in text.splitlines():
+    for line in envelope.group("body").splitlines():
         match = _DDS_VAR.match(line)
         if not match:
             continue
@@ -114,7 +119,11 @@ def parse_dds(text: str) -> dict:
         if len(dims) != 1 or dims[0]["name"] != coordinate:
             raise ValueError(f"GeoTOP coordinate variable {coordinate} is not one-dimensional on itself")
 
-    return {"dimensions": dimensions, "variables": variables}
+    return {
+        "dataset_name": envelope.group("dataset"),
+        "dimensions": dimensions,
+        "variables": variables,
+    }
 
 
 def validate_das(text: str) -> dict:
