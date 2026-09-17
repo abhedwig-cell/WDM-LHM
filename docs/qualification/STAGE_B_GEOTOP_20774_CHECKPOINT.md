@@ -1,6 +1,6 @@
 # Stage-B GeoTOP 20774 acquisition checkpoint
 
-Status: **QUALIFIED_GEOTOP_SINGLE_COLUMN_ACQUISITION_GATE_3A**
+Status: **QUALIFIED_GEOTOP_SINGLE_COLUMN_PARSE_GATE_3B**
 
 Date: 2026-09-17
 
@@ -13,14 +13,16 @@ This workunit follows the qualified `NO_LOCAL_BHRG_FOUND` boundary from PR #12 a
 ## Canonical source
 
 - repository: `abhedwig-cell/WDM-LHM`
-- canonical `main` through Gate 3A: `1d09affe80c0b9d305d0d1be6d366b9b02a02107`
+- canonical `main` through Gate 3B qualification: `1d09affe80c0b9d305d0d1be6d366b9b02a02107`
 - branch: `work/stage-b-geotop-20774-acquisition`
 - PR: #13
 - Gate-1 head: `099ea43a845179df70d811c7826a1a9badad355c`
 - Gate-2A head: `86ac9581066b73308e30a1f20e14cf38fa88ddd5`
 - Gate-2B head: `e22babf0dfea9dead8301c50a6bd439400663826`
 - Gate-2B checkpoint: `aa185e9b5d424314fe6134193e1d89c49b36c6a1`
-- Gate-3A qualified implementation head: `384175e92a026e6511bb7faba26687ab44b3f9aa`
+- Gate-3A head: `384175e92a026e6511bb7faba26687ab44b3f9aa`
+- Gate-3A checkpoint: `45dab4f143347379aea0037fa4d1b411b9adcb53`
+- Gate-3B qualified implementation head: `b38e4f06bb11621138bfa36d813ac330931e83de`
 - parent verdict: `QUALIFIED_LOCAL_BHRG_ACQUISITION_NO_LOCAL_OBJECTS`
 
 ## Reused immutable target evidence
@@ -142,55 +144,87 @@ Qualification on that exact head:
 - raw ASCII bytes `6221`;
 - raw ASCII SHA-256 `ad7acee0b57acd428f6df3d7dd6104d94c267a7ddc11b65798446db7dfebb0a8`.
 
-The raw live response contains:
+The raw live response contains one `strat` vector and one `lithok` vector of 313 values, each accompanied by the same 313-value z axis. Returned x/y labels are `172200 / 447700` and agree with the Gate-2B lower-bound mapping.
 
-- one `strat.z` axis of 313 values;
-- one `strat.strat[strat.x=172200][strat.y=447700]` value vector;
-- one `lithok.z` axis of 313 values;
-- one `lithok.lithok[lithok.x=172200][lithok.y=447700]` value vector.
+The raw vectors contain the metadata-defined missing tokens `strat=0` and `lithok=-127`. Those tokens are not valid classes and may only become missing/null.
 
-The returned x/y labels agree with the Gate-2B lower-bound coordinate mapping. Gate 3A does not yet admit the class-vector contents as interpreted geology.
+## Gate 3B: qualified structural parser
 
-The raw vectors contain the metadata-defined missing tokens `strat=0` and `lithok=-127`. These tokens must become missing/null in any later parser. They must never be treated as valid geological classes or replaced by another default.
+Verdict: **QUALIFIED_GEOTOP_SINGLE_COLUMN_PARSE_CODES_UNINTERPRETED**
 
-Gate 3A explicitly preserved:
+Qualified implementation head: `b38e4f06bb11621138bfa36d813ac330931e83de`
 
-- exactly one horizontal column;
-- exactly `strat` and `lithok`;
-- full z-index range `0:312`;
-- no probability or uncertainty grids;
-- no neighbour columns;
-- `response_parsed = false`;
-- `class_codes_interpreted = false`;
-- no q95/screen correlation;
-- no lithological or hydraulic interpretation;
-- no admission decision;
-- `allow_admissible_enabled = false`.
+Qualification on that exact head:
 
-## Next permitted action: Gate 3B structural parser only
+- ordinary CI run `35200195214`: PASS;
+- Python 3.10: `132 passed`;
+- Python 3.12: `132 passed`;
+- metadata recheck run `35200195311`: PASS;
+- coordinate acquisition recheck run `35200195035`: PASS;
+- coordinate mapping recheck run `35200194993`: PASS;
+- single-column acquisition recheck run `35200195119`: PASS;
+- live structural parser run `35200195165`: PASS;
+- parser artifact ID `10487850489`;
+- artifact name `stage-b-geotop-20774-column-parse-35200195165`;
+- artifact ZIP SHA-256 `cc90a4ceaf7d79efdd16205b31c73730a4ac27effcd9391b87ee465221123c5e`.
 
-Gate 3B may parse only the immutable Gate-3A raw response plus already qualified Gate-1/Gate-2 evidence.
+Gate 3B reacquired the raw Gate-3A response and required raw SHA-256:
 
-It may:
+`ad7acee0b57acd428f6df3d7dd6104d94c267a7ddc11b65798446db7dfebb0a8`
 
-1. require raw SHA-256 `ad7acee0b57acd428f6df3d7dd6104d94c267a7ddc11b65798446db7dfebb0a8`;
-2. require exactly the four expected data records and no extra variable records;
-3. require both z vectors to contain exactly 313 values and to equal the qualified Gate-2 z axis;
-4. require both class vectors to contain exactly 313 integer values;
-5. require the returned x/y labels to equal `172200 / 447700` for both variables;
-6. normalize only metadata-authorized missing tokens: `strat 0 -> null`, `lithok -127 -> null`;
-7. persist parsed integer-or-null vectors and structural provenance.
+before parsing.
 
-Gate 3B must not:
+Qualified structural result:
 
-- map non-missing `strat` or `lithok` codes to geological names;
-- request or use probability/uncertainty grids;
-- correlate z positions with q95, ground level or the monitoring screen;
-- infer lithology, stratigraphy, confinement, permeability or hydraulic continuity;
-- change the Stage-B adjudication model;
+- vector count: `313`;
+- `strat` missing count after exact `0 -> null`: `192`;
+- `lithok` missing count after exact `-127 -> null`: `192`;
+- distinct non-missing `strat` codes: `[1000, 3030, 3100, 4100, 5000, 5120]`;
+- distinct non-missing `lithok` codes: `[0, 1, 2, 3, 5, 6, 7]`.
+
+The parser deliberately preserves `lithok=0` as a non-missing integer code because the qualified DAS defines only `-127` as missing for `lithok`. Likewise, no unqualified token is converted to missing or to another default.
+
+The parser verifies:
+
+- exact raw SHA;
+- exact dataset and record structure;
+- exact x/y labels `172200 / 447700`;
+- both 313-element z vectors against the qualified Gate-2 z axis;
+- both 313-element class vectors as integers;
+- metadata-authorized missing normalization only.
+
+Gate 3B explicitly does not:
+
+- translate any non-missing code to a geological name;
+- use probability or uncertainty grids;
+- correlate voxels with q95, BRO ground level or the monitoring screen;
+- infer lithology, stratigraphy, permeability, confinement or hydraulic continuity;
+- alter the Stage-B decision model;
 - assign `ADMISSIBLE_FREATIC`;
 - enable `allow_admissible=True`.
 
-Fail closed on SHA mismatch, record-name drift, duplicate/extra records, length mismatch, z-axis mismatch, x/y-label mismatch, non-integer class values or any unqualified missing-value substitution.
+## Workunit verdict
 
-Missing or unknown remains missing or unknown.
+**QUALIFIED_GEOTOP_ACQUISITION_AND_STRUCTURAL_PARSE_CODES_UNINTERPRETED**
+
+The bounded GeoTOP acquisition and structural parser are qualified. They establish reproducible local subregional context for one fixed GeoTOP column, but they do not yet establish the semantic meaning of the observed integer class codes. The qualified dataset metadata does not itself supply a codebook. Therefore this workunit stops before geological interpretation.
+
+`GMW000000020774_T1` remains not positively admitted by this evidence. No inference of free hydraulic continuity, confining behaviour or freatic representativeness follows from the raw integer codes alone.
+
+## Exclusions retained
+
+- no neighbouring GeoTOP columns;
+- no probability or uncertainty grids;
+- no silent interpolation or averaging;
+- no code meaning inferred from integer magnitude or naming convention;
+- no q95/screen/ground-level correlation in this workunit;
+- no replacement of BRO ground level;
+- no hydraulic-property inference from categorical codes alone;
+- no Stage-B positive admission;
+- no expansion to the full GMW population.
+
+## Next permitted action
+
+Close this acquisition/parser workunit after its checkpoint head is requalified and merged.
+
+A subsequent, separate scientific decision surface may perform a targeted authority check for an official GeoTOP 1.6.1 class-code dictionary covering the observed `strat` and `lithok` codes. Only an explicit, version-compatible authority may permit semantic code translation. If such authority is absent, ambiguous or version-incompatible, the semantic interpretation must fail closed and the codes remain uninterpreted.
