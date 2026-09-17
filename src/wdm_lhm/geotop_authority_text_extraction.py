@@ -73,6 +73,40 @@ def _token_count(text: str, token: str) -> int:
     return len(re.findall(rf"(?<!\d){re.escape(token)}(?!\d)", text))
 
 
+def _marker_hits(text: str) -> list[str]:
+    lower = text.casefold()
+    return [marker for marker in MARKERS if marker.casefold() in lower]
+
+
+def _observed_code_occurrences(text: str) -> dict[str, dict[str, int]]:
+    return {
+        family: {str(code): _token_count(text, str(code)) for code in codes}
+        for family, codes in OBSERVED_CODES.items()
+    }
+
+
+def _page_index(text: str) -> list[dict]:
+    pages = text.split("\f")
+    if pages and not pages[-1].strip():
+        pages = pages[:-1]
+    if not pages:
+        raise ValueError("text extractor produced no page content")
+
+    records: list[dict] = []
+    for page_number, page_text in enumerate(pages, start=1):
+        page_bytes = page_text.encode("utf-8")
+        records.append(
+            {
+                "page": page_number,
+                "characters": len(page_text),
+                "sha256": _sha256_bytes(page_bytes),
+                "marker_hits": _marker_hits(page_text),
+                "observed_code_occurrences": _observed_code_occurrences(page_text),
+            }
+        )
+    return records
+
+
 def extract_geotop_authority_text(
     source_dir: str | Path,
     output_dir: str | Path,
@@ -80,7 +114,7 @@ def extract_geotop_authority_text(
     extractor: Callable[[Path, Path], None] | None = None,
     extractor_identity: str | None = None,
 ) -> dict:
-    """Verify Gate-3A PDFs and extract text without semantic code translation."""
+    """Verify Gate-3A PDFs and extract page-preserving text without semantic code translation."""
     source = Path(source_dir)
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -110,13 +144,8 @@ def extract_geotop_authority_text(
         if not text_bytes:
             raise ValueError(f"text extractor produced empty output for {key}")
         text = text_bytes.decode("utf-8", errors="strict")
+        pages = _page_index(text)
 
-        lower = text.casefold()
-        marker_hits = [marker for marker in MARKERS if marker.casefold() in lower]
-        observed_code_occurrences = {
-            family: {str(code): _token_count(text, str(code)) for code in codes}
-            for family, codes in OBSERVED_CODES.items()
-        }
         records[key] = {
             "source_file": spec["input_name"],
             "source_sha256": actual_sha,
@@ -124,8 +153,10 @@ def extract_geotop_authority_text(
             "text_bytes": len(text_bytes),
             "text_sha256": _sha256_bytes(text_bytes),
             "characters": len(text),
-            "marker_hits": marker_hits,
-            "observed_code_occurrences": observed_code_occurrences,
+            "page_count": len(pages),
+            "page_index": pages,
+            "marker_hits": _marker_hits(text),
+            "observed_code_occurrences": _observed_code_occurrences(text),
         }
 
     manifest = {
@@ -141,6 +172,7 @@ def extract_geotop_authority_text(
             "exact_gate_3a_hashes_required": True,
             "fixed_document_set_only": True,
             "text_extraction_only": True,
+            "page_index_preserved": True,
             "marker_inventory_only": True,
             "code_translation_performed": False,
             "version_compatibility_established": False,
