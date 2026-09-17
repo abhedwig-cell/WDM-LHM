@@ -1,6 +1,6 @@
 # Stage-B GeoTOP 20774 acquisition checkpoint
 
-Status: **DESIGN_GEOTOP_METADATA_PROBE_PENDING_LIVE**
+Status: **QUALIFIED_GEOTOP_METADATA_GATE_1**
 
 Date: 2026-09-17
 
@@ -13,10 +13,12 @@ This workunit follows the qualified `NO_LOCAL_BHRG_FOUND` boundary from PR #12. 
 ## Canonical source
 
 - repository: `abhedwig-cell/WDM-LHM`
-- canonical main at workunit start: `1d09affe80c0b9d305d0d1be6d366b9b02a02107`
+- canonical main at workunit start and Gate-1 qualification: `1d09affe80c0b9d305d0d1be6d366b9b02a02107`
 - branch: `work/stage-b-geotop-20774-acquisition`
+- qualified Gate-1 head: `099ea43a845179df70d811c7826a1a9badad355c`
 - parent verdict: `QUALIFIED_LOCAL_BHRG_ACQUISITION_NO_LOCAL_OBJECTS`
 - tracking surface: issue #4
+- pull request: #13
 
 ## Reused immutable target evidence
 
@@ -31,80 +33,122 @@ No broad GMW, BRO, REGIS or GeoTOP rediscovery is permitted in this workunit.
 
 ## GeoTOP authority and scale boundary
 
-The current public model authority is BRO GeoTOP v1.6.1 (2025), published by TNO Geological Survey of the Netherlands. GeoTOP is a subregional model intended for provincial, municipal and district-scale use; at well scale it is supporting context rather than local truth.
-
-The public OPeNDAP dataset is:
+The bounded public source is the TNO/DINOloket GeoTOP OPeNDAP dataset:
 
 `https://www.dinodata.nl/opendap/hyrax/GeoTOP/geotop.nc`
 
-The voxel model is expected to expose a 100 m horizontal grid and 0.5 m vertical voxels, but this workunit does not trust those dimensions from prose alone. The live metadata probe must establish the exact dataset descriptor and attributes before any index or data extraction is implemented.
+GeoTOP is supporting subregional geological context, not local well truth. No GeoTOP result may override direct groundwater observations, same-location multi-filter evidence or BRO construction metadata.
 
-## Gate 1: metadata-only probe
+## Gate 1: qualified metadata boundary
 
-The first live gate may only retrieve and persist:
+Gate 1 retrieved only DAP2 `.dds` and `.das` metadata. It did not request coordinate values, voxel values or any model class values.
 
-- OPeNDAP DDS;
-- OPeNDAP DAS;
-- endpoint/provenance metadata;
-- SHA-256 and byte counts;
-- a compact machine-readable inventory of declared dimensions and variable names parsed from DDS/DAS.
+### Live qualification
 
-It must not request any voxel values.
+Exact qualified head:
 
-The gate must fail closed if:
+`099ea43a845179df70d811c7826a1a9badad355c`
 
-- the host/path drifts away from the fixed GeoTOP dataset;
-- DDS or DAS cannot be retrieved;
-- the response is empty or not parseable as the expected OPeNDAP text metadata;
-- required coordinate dimensions/variables cannot be established;
-- duplicate or internally inconsistent dimension declarations are found.
+Ordinary CI:
 
-## Gate 2: bounded point-column acquisition
+- run `35188889824`: **PASS**;
+- Python 3.10: `93 passed`;
+- Python 3.12: `93 passed`.
 
-Gate 2 is not permitted until Gate 1 is qualified.
+Live metadata workflow:
 
-After exact dimensions, coordinate semantics and variable names are known, a separate atomic commit may:
+- run `35188889782`: **PASS**;
+- artifact ID: `10483405874`;
+- artifact name: `stage-b-geotop-20774-metadata-35188889782`;
+- artifact ZIP SHA-256: `5cca45335d6e041cb852d28f0d5f126931584cbca3e522b1066198d3b4b9c62f`;
+- DDS SHA-256: `845bf38ef3bcbed025e0a01925508f5f143644c188e9ff703651a85d8fe5ba07`;
+- DAS SHA-256: `50026e3c4a77062af4349ce5d932628c97fb24572e2f4d8a332c58a59947c7dc`.
 
-1. determine the nominal GeoTOP cell containing the fixed RD target using the live coordinate arrays/metadata;
-2. record horizontal boundary distance and preserve neighbour sensitivity if the coordinate is close to a cell edge;
-3. request exactly one vertical column, plus explicitly justified neighbour columns only when required by boundary sensitivity;
-4. retain raw OPeNDAP responses and hashes;
-5. emit typed raw values without mapping them to hydraulic meaning.
+### Live dataset contract
 
-No spatial averaging is permitted.
+Declared dimensions:
 
-## Scientific exclusions
+- `x = 2646`;
+- `y = 2811`;
+- `z = 313`.
 
-This workunit must not:
+Confirmed declared variables include:
 
-- convert lithological class to hydraulic conductivity;
-- infer a confining layer from a categorical voxel code alone;
-- infer hydraulic continuity from GeoTOP alone;
-- replace BRO ground level with a GeoTOP surface elevation;
-- use REGIS `freatisch` or `kD`;
+- `x`;
+- `y`;
+- `z`;
+- `strat`;
+- `lithok`.
+
+The live workflow explicitly verified:
+
+- `metadata_only = true`;
+- `data_requests_issued = false`;
+- `constraint_expression_issued = false`;
+- `voxel_values_read = false`;
+- `lithology_interpretation_performed = false`;
+- `hydraulic_interpretation_performed = false`;
+- `screen_correlation_performed = false`;
+- `admission_decision_performed = false`;
+- `allow_admissible_enabled = false`.
+
+## Parser reconciliation during Gate 1
+
+Three live-service syntax differences were encountered and corrected without changing scientific assumptions:
+
+1. the DAP2 dataset envelope uses a dataset name that must be parsed generically rather than hard-coded to `geotop`;
+2. DAP2 Grid structures may repeat coordinate declarations; byte-for-byte semantic duplicates are deduplicated, while conflicting duplicates still fail closed;
+3. DAS attribute-section indentation is not fixed to exactly two spaces; one-or-more whitespace is accepted while an actual nested section remains required.
+
+These are protocol/parser contract corrections only. Dataset identity, endpoint constraints, required coordinate semantics and the no-data/no-interpretation boundary were not relaxed.
+
+## Gate-1 verdict
+
+**QUALIFIED_GEOTOP_METADATA_BOUNDARY**
+
+The dataset identity, dimensions and required variable inventory are now pinned sufficiently to design the next bounded acquisition gate. This verdict does not qualify any GeoTOP geological interpretation and does not change the Stage-B adjudication state of `GMW000000020774_T1`.
+
+## Gate 2: coordinate-axis mapping only
+
+Gate 2 may now acquire only the coordinate axes `x`, `y` and `z` from the same fixed dataset. It must remain separate from categorical voxel acquisition.
+
+Gate 2 may:
+
+1. issue one fixed, allow-listed coordinate-only OPeNDAP request;
+2. persist the exact raw response, endpoint, byte count and SHA-256;
+3. parse the complete `x`, `y` and `z` axes and verify their lengths against the Gate-1 dimensions;
+4. verify that every coordinate is finite and each axis is strictly monotonic;
+5. determine actual horizontal and vertical spacing from the live axes rather than assuming 100 m / 0.5 m from documentation;
+6. map the fixed RD target to a deterministic nominal horizontal cell/index;
+7. calculate distance to horizontal cell boundaries and record any neighbour-sensitivity requirement explicitly.
+
+Gate 2 must not:
+
+- request `strat`, `lithok` or any other voxel/model-class values;
+- average cells;
+- correlate q95 or the monitoring screen with GeoTOP voxels;
+- interpret lithology, stratigraphy or hydraulic behaviour;
+- infer a confining layer or hydraulic continuity;
+- replace BRO ground level with a GeoTOP elevation;
 - change the Stage-B decision model;
 - assign `ADMISSIBLE_FREATIC`;
 - enable `allow_admissible=True`.
 
+## Fail-closed conditions for Gate 2
+
+Gate 2 must fail closed on:
+
+- endpoint or query drift away from the exact coordinate-only request;
+- missing or extra requested variables;
+- malformed coordinate response;
+- axis lengths inconsistent with `2646 / 2811 / 313`;
+- non-finite values;
+- non-monotonic axes;
+- ambiguous target mapping that is silently resolved instead of reported;
+- any attempt to request categorical/model values in this gate.
+
 Missing or unknown remains missing or unknown.
-
-## Qualification plan
-
-Gate 1 synthetic tests must cover:
-
-- fixed endpoint construction;
-- DDS dimension parsing;
-- variable inventory parsing;
-- malformed/empty metadata rejection;
-- duplicate/inconsistent dimension rejection;
-- proof that no data constraint expression is issued in metadata-only mode.
-
-Gate 1 live qualification must run on the same PR head as ordinary CI and persist immutable metadata artifacts.
-
-## Verdict
-
-**DESIGN_GEOTOP_METADATA_PROBE_PENDING_LIVE**
 
 ## Next permitted action
 
-Implement and qualify Gate 1 only. Do not implement point-column indexing or lithological interpretation until the live GeoTOP DDS/DAS contract is pinned.
+Implement and qualify **coordinate-axis mapping only** on the current branch. Do not request `strat` or `lithok` values until the live coordinate mapping and boundary sensitivity for `GMW000000020774` are independently qualified.
