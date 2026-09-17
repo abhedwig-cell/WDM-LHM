@@ -1,0 +1,99 @@
+name: REGIS hydro parse qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Reacquire pinned raw hydro columns
+        run: |
+          python -m wdm_lhm.regis_hydro_probe_cli \
+            --output-dir regis-hydro-parse-evidence
+      - name: Parse qualified raw columns
+        run: |
+          python -m wdm_lhm.regis_hydro_parse_cli \
+            --raw-dir regis-hydro-parse-evidence \
+            --output regis-hydro-parse-evidence/regis_hydro_columns.json
+      - name: Validate parsing boundary and live invariants
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("regis-hydro-parse-evidence")
+          parsed_path = root / "regis_hydro_columns.json"
+          parsed = json.loads(parsed_path.read_text())
+          expected_hashes = {
+              "4074_nominal": "fbb7cf9bf77abbb268fb9cf38f709ee400923693f165e5d292f656f0e5bfc2aa",
+              "4074_west_boundary_sensitivity": "79a6c28d741bd5993a56475b117e95c69903ac1e4d506e504b394886cb53356c",
+              "4104_nominal": "9bbab4688d86aec9d62788de411a29ce86fbae9d6a0f247c831d15a722ff6560",
+          }
+          expected_counts = {"top": 22, "bottom": 21, "kh": 15, "kv": 6, "c": 6}
+          expected_xy = {
+              "4074_nominal": ("170300", "440700"),
+              "4074_west_boundary_sensitivity": ("170200", "440700"),
+              "4104_nominal": ("169600", "441500"),
+          }
+
+          if parsed["layer_count"] != 132 or parsed["variables"] != ["top", "bottom", "kh", "kv", "c"]:
+              raise SystemExit("Parsed schema drift")
+          if set(parsed["columns"]) != set(expected_hashes):
+              raise SystemExit(f"Parsed column drift: {parsed['columns'].keys()}")
+          if parsed["missing_semantics"]["raw_missing_token"] != "-9999":
+              raise SystemExit("Missing sentinel drift")
+
+          for column_id, column in parsed["columns"].items():
+              if column["layer_count"] != 132:
+                  raise SystemExit(f"Layer count drift for {column_id}")
+              if column["present_counts"] != expected_counts:
+                  raise SystemExit(f"Present-count drift for {column_id}: {column['present_counts']}")
+              if (column["x"], column["y"]) != expected_xy[column_id]:
+                  raise SystemExit(f"Coordinate drift for {column_id}: {(column['x'], column['y'])}")
+              if column["source"]["sha256"] != expected_hashes[column_id]:
+                  raise SystemExit(f"Raw hash drift for {column_id}")
+              if len(column["layers"]) != 132:
+                  raise SystemExit(f"Layer-row count drift for {column_id}")
+
+          guards = parsed["guardrails"]
+          if not guards["raw_hashes_verified"]:
+              raise SystemExit("Raw-hash verification flag false")
+          for key in (
+              "screen_to_unit_mapping_performed",
+              "hydrogeological_interpretation_performed",
+              "admission_decision_performed",
+          ):
+              if guards[key]:
+                  raise SystemExit(f"Parsing boundary violation: {key}=true")
+
+          total = sum(p.stat().st_size for p in root.iterdir() if p.is_file())
+          if total > 2 * 1024 * 1024:
+              raise SystemExit(f"Parse evidence exceeds size guardrail: {total}")
+          print(json.dumps({
+              "parsed_sha256": hashlib.sha256(parsed_path.read_bytes()).hexdigest(),
+              "columns": {k: v["present_counts"] for k, v in parsed["columns"].items()},
+              "guardrails": guards,
+          }, indent=2))
+          PY
+      - name: Upload parsed hydro evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: regis-hydro-parse-${{ github.run_id }}
+          path: regis-hydro-parse-evidence
+          if-no-files-found: error
+          retention-days: 14

@@ -1,0 +1,98 @@
+name: REGIS raw hydro column probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Acquire raw hydro columns only
+        run: |
+          python -m wdm_lhm.regis_hydro_probe_cli \
+            --output-dir regis-hydro-evidence
+      - name: Validate raw hydro acquisition boundary
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("regis-hydro-evidence")
+          manifest = json.loads((root / "regis_hydro_manifest.json").read_text())
+          expected_columns = {
+              "4074_nominal": (1703, 1407),
+              "4074_west_boundary_sensitivity": (1702, 1407),
+              "4104_nominal": (1696, 1415),
+          }
+          expected_variables = ["top", "bottom", "kh", "kv", "c"]
+          forbidden = ("freatisch", "kD", "hgv", "sdh", "sdv")
+
+          if manifest["counts"]["columns"] != 3:
+              raise SystemExit(f"Unexpected column count: {manifest['counts']}")
+          if manifest["dependencies"]["qualified_mapping_sha256"] != "58596e715f335563f8654bf99ba4dcee190f7668ed9d76e1aa1ae37b5fd3389a":
+              raise SystemExit("Hydro acquisition is not pinned to qualified coordinate mapping")
+
+          seen = set()
+          total = 0
+          for response in manifest["responses"]:
+              cid = response["column_id"]
+              seen.add(cid)
+              if cid not in expected_columns:
+                  raise SystemExit(f"Unexpected column: {cid}")
+              if (response["x_index"], response["y_index"]) != expected_columns[cid]:
+                  raise SystemExit(f"Column index drift for {cid}: {response}")
+              if response["variables"] != expected_variables or response["layer_slice"] != "0:1:131":
+                  raise SystemExit(f"Variable/layer drift for {cid}: {response}")
+              if any(name in response["requested_url"] for name in forbidden):
+                  raise SystemExit(f"Forbidden lineage-coupled variable in request for {cid}")
+              raw = root / response["artifact_file"]
+              if not raw.is_file():
+                  raise SystemExit(f"Missing raw hydro response for {cid}")
+              size = raw.stat().st_size
+              if size != response["bytes"] or size > 512 * 1024:
+                  raise SystemExit(f"Hydro response size guardrail failed for {cid}: {size}")
+              digest = hashlib.sha256(raw.read_bytes()).hexdigest()
+              if digest != response["sha256"]:
+                  raise SystemExit(f"Hydro SHA-256 mismatch for {cid}")
+              total += size
+
+          if seen != set(expected_columns):
+              raise SystemExit(f"Missing/extra hydro columns: {seen}")
+          if total != manifest["counts"]["response_bytes"] or total > 2 * 1024 * 1024:
+              raise SystemExit(f"Total hydro evidence size guardrail failed: {total}")
+
+          guards = manifest["guardrails"]
+          if not guards["hydrogeological_model_values_requested"]:
+              raise SystemExit("Hydro request flag unexpectedly false")
+          for key in (
+              "freatic_surface_requested",
+              "kd_requested",
+              "screen_to_unit_mapping_performed",
+              "hydrogeological_interpretation_performed",
+              "admission_decision_performed",
+          ):
+              if guards[key]:
+                  raise SystemExit(f"Boundary violation: {key}=true")
+          print(json.dumps({"counts": manifest["counts"], "responses": manifest["responses"], "guardrails": guards}, indent=2))
+          PY
+      - name: Upload compact raw hydro evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: regis-hydro-probe-${{ github.run_id }}
+          path: regis-hydro-evidence
+          if-no-files-found: error
+          retention-days: 14

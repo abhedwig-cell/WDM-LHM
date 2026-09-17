@@ -1,0 +1,110 @@
+name: REGIS coordinate evidence probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Acquire coordinate arrays only
+        run: |
+          python -m wdm_lhm.regis_coordinate_probe_cli \
+            --output-dir regis-coordinate-evidence
+      - name: Validate coordinate-only boundary
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path("regis-coordinate-evidence")
+          manifest = json.loads((root / "regis_coordinate_manifest.json").read_text())
+          response = manifest["response"]
+          request = manifest["request"]
+          guards = manifest["guardrails"]
+          expected = ["x", "y", "x_bounds", "y_bounds", "layer"]
+          if request["variables"] != expected:
+              raise SystemExit(f"Coordinate variable drift: {request['variables']}")
+          if not guards["coordinate_values_requested"]:
+              raise SystemExit("Coordinate request flag unexpectedly false")
+          for key in (
+              "hydrogeological_model_values_requested",
+              "freatic_surface_requested",
+              "point_to_cell_mapping_performed",
+              "hydrogeological_interpretation_performed",
+              "admission_decision_performed",
+          ):
+              if guards[key]:
+                  raise SystemExit(f"Boundary violation: {key}=true")
+          raw = root / response["artifact_file"]
+          if not raw.is_file():
+              raise SystemExit("Raw coordinate evidence is missing")
+          if raw.stat().st_size != response["bytes"] or raw.stat().st_size > 2 * 1024 * 1024:
+              raise SystemExit("Coordinate response size guardrail failed")
+          digest = hashlib.sha256(raw.read_bytes()).hexdigest()
+          if digest != response["sha256"]:
+              raise SystemExit("Coordinate response SHA-256 mismatch")
+          if digest != "fa39271a98fefa2091483b7247d53e3744e1e26e478969310ce6f3560725c7f3":
+              raise SystemExit(f"Qualified coordinate evidence drift: {digest}")
+          forbidden = ("top", "bottom", "hgv", "kD", "kh", "kv", "sdh", "sdv", "freatisch")
+          if any(name in request["requested_url"] for name in forbidden):
+              raise SystemExit("Hydrogeological variable leaked into coordinate request")
+          print(json.dumps({"request": request, "response": response, "guardrails": guards}, indent=2))
+          PY
+      - name: Qualify coordinate parser and target mapping
+        run: |
+          python -m wdm_lhm.regis_grid_mapping_cli \
+            --raw regis-coordinate-evidence/regis_coordinate_response.ascii.txt \
+            --output regis-coordinate-evidence/regis_coordinate_mapping.json
+      - name: Validate target mapping and boundary semantics
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("regis-coordinate-evidence/regis_coordinate_mapping.json")
+          mapping = json.loads(path.read_text())
+          if mapping["dimensions"] != {"x": 2800, "y": 3250, "layer": 132}:
+              raise SystemExit(f"Unexpected REGIS dimensions: {mapping['dimensions']}")
+          if mapping["coordinate_evidence_sha256"] != "fa39271a98fefa2091483b7247d53e3744e1e26e478969310ce6f3560725c7f3":
+              raise SystemExit("Coordinate mapping is not tied to the qualified raw evidence")
+
+          p4074 = mapping["targets"]["GMW000000004074"]
+          if p4074["nominal_cell"] != {"x_index": 1703, "y_index": 1407}:
+              raise SystemExit(f"4074 cell drift: {p4074['nominal_cell']}")
+          if p4074["x"]["nearest_boundary_distance_m"] != "0.00558661332":
+              raise SystemExit(f"4074 x-boundary distance drift: {p4074['x']}")
+          if p4074["x"]["adjacent_index_across_nearest_boundary"] != 1702:
+              raise SystemExit("4074 adjacent x-cell drift")
+
+          p4104 = mapping["targets"]["GMW000000004104"]
+          if p4104["nominal_cell"] != {"x_index": 1696, "y_index": 1415}:
+              raise SystemExit(f"4104 cell drift: {p4104['nominal_cell']}")
+          if p4104["x"]["nearest_boundary_distance_m"] != "19.99912779132":
+              raise SystemExit(f"4104 x-boundary distance drift: {p4104['x']}")
+
+          if any(mapping["guardrails"].values()):
+              raise SystemExit(f"Mapping boundary violation: {mapping['guardrails']}")
+          print(json.dumps({"targets": mapping["targets"], "decision_semantics": mapping["decision_semantics"]}, indent=2))
+          PY
+      - name: Upload compact coordinate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: regis-coordinate-probe-${{ github.run_id }}
+          path: regis-coordinate-evidence
+          if-no-files-found: error
+          retention-days: 14
