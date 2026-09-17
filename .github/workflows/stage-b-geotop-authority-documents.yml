@@ -1,0 +1,69 @@
+name: Stage-B GeoTOP authority document acquisition
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/wdm_lhm/geotop_authority_document_acquisition.py'
+      - 'src/wdm_lhm/geotop_authority_document_acquisition_cli.py'
+      - 'tests/test_geotop_authority_document_acquisition.py'
+      - 'docs/qualification/STAGE_B_GEOTOP_CODEBOOK_AUTHORITY.md'
+      - '.github/workflows/stage-b-geotop-authority-documents.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authority-documents:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Acquire fixed official GeoTOP document set only
+        run: |
+          python -m wdm_lhm.geotop_authority_document_acquisition_cli --output-dir stage_b_geotop_authority_documents
+      - name: Validate acquisition-only boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path('stage_b_geotop_authority_documents')
+          m = json.loads((root / 'geotop_authority_document_acquisition_manifest.json').read_text())
+          assert m['capability'] == 'STAGE_B_GEOTOP_161_CODEBOOK_AUTHORITY_DOCUMENT_ACQUISITION'
+          assert m['state'] == 'BOUNDED_OFFICIAL_AUTHORITY_DOCUMENTS_ACQUIRED_NOT_ANALYSED'
+          assert set(m['documents']) == {'v16_supplement', 'v161_small_release', 'general_report'}
+          assert m['source_selection']['document_count'] == 3
+          g = m['guardrails']
+          assert g['official_dinoloket_documents_only'] is True
+          assert g['fixed_document_set_only'] is True
+          assert g['pdf_bytes_persisted_before_analysis'] is True
+          assert g['pdf_text_extracted'] is False
+          assert g['code_tables_extracted'] is False
+          assert g['code_translation_performed'] is False
+          assert g['version_compatibility_established'] is False
+          assert g['geological_interpretation_performed'] is False
+          assert g['hydraulic_interpretation_performed'] is False
+          assert g['admission_decision_performed'] is False
+          for key, rec in m['documents'].items():
+              p = root / rec['output_name']
+              assert p.exists() and p.read_bytes().startswith(b'%PDF-')
+              assert rec['sha256']
+              assert rec['bytes'] > 1000
+          print(json.dumps({k: {'sha256': v['sha256'], 'bytes': v['bytes'], 'final_url': v['final_url']} for k, v in m['documents'].items()}, indent=2))
+          PY
+      - name: Upload raw official authority documents and provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-geotop-authority-documents-${{ github.run_id }}
+          path: stage_b_geotop_authority_documents/
+          retention-days: 14
+          if-no-files-found: error
