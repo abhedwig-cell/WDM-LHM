@@ -1,0 +1,88 @@
+name: Stage-B GeoTOP 20774 single-column parse
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/wdm_lhm/geotop_column_acquisition.py'
+      - 'src/wdm_lhm/geotop_column_acquisition_cli.py'
+      - 'src/wdm_lhm/geotop_column_parse.py'
+      - 'src/wdm_lhm/geotop_column_parse_cli.py'
+      - 'tests/test_geotop_column_parse.py'
+      - '.github/workflows/stage-b-geotop-20774-column-parse.yml'
+      - 'docs/qualification/STAGE_B_GEOTOP_20774_CHECKPOINT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  single-column-parse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Reacquire qualified raw single column
+        run: |
+          python -m wdm_lhm.geotop_column_acquisition_cli --output-dir stage_b_geotop_20774_column_parse/raw
+      - name: Parse structure and normalize missing tokens only
+        run: |
+          python -m wdm_lhm.geotop_column_parse_cli \
+            --raw-file stage_b_geotop_20774_column_parse/raw/geotop_single_column.ascii.txt \
+            --output-file stage_b_geotop_20774_column_parse/geotop_single_column_parsed.json
+      - name: Validate parse-only boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path('stage_b_geotop_20774_column_parse/geotop_single_column_parsed.json')
+          m = json.loads(p.read_text())
+          assert m['capability'] == 'STAGE_B_GEOTOP_20774_SINGLE_COLUMN_PARSE'
+          assert m['state'] == 'SINGLE_COLUMN_PARSED_CODES_UNINTERPRETED'
+          assert m['raw_dependency']['sha256'] == 'ad7acee0b57acd428f6df3d7dd6104d94c267a7ddc11b65798446db7dfebb0a8'
+          assert m['mapping_dependency']['x_index_zero_based'] == 1586
+          assert m['mapping_dependency']['y_index_zero_based'] == 1092
+          assert m['mapping_dependency']['x_lower_bound_m'] == 172200
+          assert m['mapping_dependency']['y_lower_bound_m'] == 447700
+          assert m['structural_summary']['count'] == 313
+          assert m['structural_summary']['strat_missing_count'] == 192
+          assert m['structural_summary']['lithok_missing_count'] == 192
+          assert m['structural_summary']['strat_distinct_non_missing_codes'] == [1000, 3030, 3100, 4100, 5000, 5120]
+          assert m['structural_summary']['lithok_distinct_non_missing_codes'] == [0, 1, 2, 3, 5, 6, 7]
+          assert m['missing_semantics']['strat_raw_missing_token'] == 0
+          assert m['missing_semantics']['lithok_raw_missing_token'] == -127
+          assert len(m['column']['z_m_nap']) == 313
+          assert len(m['column']['strat_code']) == 313
+          assert len(m['column']['lithok_code']) == 313
+          g = m['guardrails']
+          assert g['raw_sha_verified'] is True
+          assert g['record_structure_verified'] is True
+          assert g['qualified_z_axis_verified'] is True
+          assert g['x_y_labels_verified'] is True
+          assert g['missing_tokens_normalized_only'] is True
+          assert g['class_codes_interpreted'] is False
+          assert g['geological_names_assigned'] is False
+          assert g['probability_or_uncertainty_used'] is False
+          assert g['screen_correlation_performed'] is False
+          assert g['lithology_interpretation_performed'] is False
+          assert g['hydraulic_interpretation_performed'] is False
+          assert g['admission_decision_performed'] is False
+          assert g['allow_admissible_enabled'] is False
+          print(m['structural_summary'])
+          PY
+      - name: Upload parsed structural evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-geotop-20774-column-parse-${{ github.run_id }}
+          path: stage_b_geotop_20774_column_parse/
+          retention-days: 14
+          if-no-files-found: error

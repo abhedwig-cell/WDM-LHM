@@ -1,0 +1,79 @@
+name: Stage-B GeoTOP 20774 single-column acquisition
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/wdm_lhm/geotop_column_acquisition.py'
+      - 'src/wdm_lhm/geotop_column_acquisition_cli.py'
+      - 'tests/test_geotop_column_acquisition.py'
+      - '.github/workflows/stage-b-geotop-20774-column.yml'
+      - 'docs/qualification/STAGE_B_GEOTOP_20774_CHECKPOINT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  single-column-acquisition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Acquire one raw GeoTOP strat/lithok column only
+        run: |
+          python -m wdm_lhm.geotop_column_acquisition_cli --output-dir stage_b_geotop_20774_column
+      - name: Validate acquisition-only boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          p = Path('stage_b_geotop_20774_column/geotop_single_column_acquisition_manifest.json')
+          m = json.loads(p.read_text())
+          assert m['capability'] == 'STAGE_B_GEOTOP_20774_SINGLE_COLUMN_ACQUISITION'
+          assert m['state'] == 'RAW_SINGLE_COLUMN_ACQUIRED_NOT_PARSED'
+          assert m['mapping_dependency']['head'] == 'e22babf0dfea9dead8301c50a6bd439400663826'
+          assert m['request']['variables'] == ['strat', 'lithok']
+          assert m['request']['x_index_zero_based'] == 1586
+          assert m['request']['y_index_zero_based'] == 1092
+          assert m['request']['z_index_range_inclusive'] == [0, 312]
+          expected = ('strat[1586:1:1586][1092:1:1092][0:1:312],'
+                      'lithok[1586:1:1586][1092:1:1092][0:1:312]')
+          assert m['request']['constraint_expression'] == expected
+          g = m['guardrails']
+          assert g['single_horizontal_column_only'] is True
+          assert g['categorical_voxel_values_requested'] is True
+          assert g['strat_requested'] is True
+          assert g['lithok_requested'] is True
+          assert g['probability_grids_requested'] is False
+          assert g['uncertainty_grids_requested'] is False
+          assert g['neighbour_columns_requested'] is False
+          assert g['response_parsed'] is False
+          assert g['class_codes_interpreted'] is False
+          assert g['screen_correlation_performed'] is False
+          assert g['lithology_interpretation_performed'] is False
+          assert g['hydraulic_interpretation_performed'] is False
+          assert g['admission_decision_performed'] is False
+          assert g['allow_admissible_enabled'] is False
+          print({
+              'bytes': m['response']['bytes'],
+              'sha256': m['response']['sha256'],
+              'final_url': m['request']['final_url'],
+          })
+          PY
+      - name: Upload raw single-column evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-geotop-20774-column-${{ github.run_id }}
+          path: stage_b_geotop_20774_column/
+          retention-days: 14
+          if-no-files-found: error
