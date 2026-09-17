@@ -30,10 +30,12 @@ def test_catalog_observation_entities_are_not_measurement_points(tmp_path):
     })], "links": []}
 
     # Use one stable timestamp representation throughout. 120 weekly values span
-    # more than the 730-day scientific Stage-A requirement.
+    # more than the 730-day scientific Stage-A requirement. Row-level assessment
+    # is explicit so this fixture remains positive scientific evidence under the
+    # BRO quality contract while the test itself stays focused on catalog counts.
     dates = pd.date_range("2020-01-01", periods=120, freq="7D")
-    lines = ["tijdstip meting;waterstand"]
-    lines += [f"{d.isoformat()}+01:00;{7.0 + 0.1 * ((i % 10) / 10):.3f}" for i, d in enumerate(dates)]
+    lines = ["tijdstip meting;waterstand;status kwaliteitscontrole"]
+    lines += [f"{d.isoformat()}+01:00;{7.0 + 0.1 * ((i % 10) / 10):.3f};goedgekeurd" for i, d in enumerate(dates)]
     gld_csv = ("\n".join(lines) + "\n").encode()
 
     def transport(url, headers, timeout):

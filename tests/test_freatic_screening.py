@@ -17,6 +17,7 @@ def _obs(station_id, start="2020-01-01", periods=900, head=7.0, series_class="fu
         "date": dates,
         "obs_head_mnap": values,
         "series_class": series_class,
+        "assessment_status": "goedgekeurd",
     })
 
 
@@ -53,6 +54,43 @@ def test_prescreen_short_series_not_usable():
     assert out.iloc[0].prescreen_verdict == "NOT_USABLE_SERIES"
 
 
+def test_prescreen_fully_assessed_uses_only_explicitly_approved_rows():
+    stations = pd.DataFrame([{
+        "station_id":"S1", "gmw_bro_id":"G1", "tube_number":1, "gld_bro_id":"L1",
+        "ground_level_mnap":8.0, "screen_top_position_mnap":6.5, "screen_bottom_position_mnap":5.5,
+        "tube_status":"gebruiksklaar", "tube_in_use":"ja",
+    }])
+    obs = _obs("S1")
+    obs.loc[0, "obs_head_mnap"] = 20.0
+    obs.loc[0, "assessment_status"] = "afgekeurd"
+    obs.loc[1, "obs_head_mnap"] = 19.0
+    obs.loc[1, "assessment_status"] = "onbeslist"
+
+    out = freatic_prescreen(stations, obs).iloc[0]
+    assert out.n_observations_raw == 900
+    assert out.n_observations == 898
+    assert out.n_assessment_approved == 898
+    assert out.n_assessment_rejected == 1
+    assert out.n_assessment_undecided == 1
+    assert out.above_ground_fraction == 0.0
+    assert out.prescreen_verdict == "CANDIDATE_FREATIC"
+    assert "NON_APPROVED_ROWS_EXCLUDED" in out.reason_codes
+
+
+def test_prescreen_fully_assessed_without_row_status_fails_closed():
+    stations = pd.DataFrame([{
+        "station_id":"S1", "gmw_bro_id":"G1", "tube_number":1, "gld_bro_id":"L1",
+        "ground_level_mnap":8.0, "screen_top_position_mnap":6.5, "screen_bottom_position_mnap":5.5,
+        "tube_status":"gebruiksklaar", "tube_in_use":"ja",
+    }])
+    obs = _obs("S1").drop(columns=["assessment_status"])
+    out = freatic_prescreen(stations, obs).iloc[0]
+    assert out.n_observations_raw == 900
+    assert out.n_observations == 0
+    assert out.prescreen_verdict == "NOT_USABLE_SERIES"
+    assert "ROW_ASSESSMENT_STATUS_UNAVAILABLE" in out.reason_codes
+
+
 def test_vertical_head_pair_evidence_reports_persistent_difference():
     stations = pd.DataFrame([
         {"station_id":"S1", "gmw_bro_id":"G1", "ground_level_mnap":8.0,
@@ -68,6 +106,23 @@ def test_vertical_head_pair_evidence_reports_persistent_difference():
     assert r.vertical_head_evidence_status == "EVIDENCE_AVAILABLE"
     assert abs(r.median_shallow_minus_deep_head_m - 0.25) < 1e-10
     assert r.positive_sign_fraction == 1.0
+
+
+def test_vertical_head_pair_excludes_rejected_rows_before_daily_aggregation():
+    stations = pd.DataFrame([
+        {"station_id":"S1", "gmw_bro_id":"G1", "ground_level_mnap":8.0,
+         "screen_top_position_mnap":6.5, "screen_bottom_position_mnap":5.5},
+        {"station_id":"S2", "gmw_bro_id":"G1", "ground_level_mnap":8.0,
+         "screen_top_position_mnap":2.0, "screen_bottom_position_mnap":1.0},
+    ])
+    o1 = _obs("S1", periods=100, head=7.0)
+    o2 = _obs("S2", periods=100, head=6.75)
+    o1.loc[0, "obs_head_mnap"] = 100.0
+    o1.loc[0, "assessment_status"] = "afgekeurd"
+    out = vertical_head_pair_evidence(stations, pd.concat([o1, o2], ignore_index=True), min_overlap_days=30)
+    r = out.iloc[0]
+    assert r.overlap_days == 99
+    assert abs(r.median_shallow_minus_deep_head_m - 0.25) < 1e-10
 
 
 def test_admission_is_fail_closed_and_uses_positive_evidence():

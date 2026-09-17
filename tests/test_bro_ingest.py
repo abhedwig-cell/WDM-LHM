@@ -8,33 +8,51 @@ def _feature(fid, props, lon=5.67, lat=51.97):
     return {"type":"Feature", "id":fid, "geometry":{"type":"Point","coordinates":[lon,lat]}, "properties":props}
 
 
-def test_parse_gld_compact_csv_dutch_columns():
+def test_parse_gld_compact_csv_dutch_columns_preserves_assessment_status():
     payload = ("tijdstip meting;waterstand;status kwaliteitscontrole\n"
                "2024-01-01T12:00:00+01:00;7,123;goedgekeurd\n"
-               "2024-01-02T12:00:00+01:00;7,111;goedgekeurd\n").encode()
+               "2024-01-02T12:00:00+01:00;7,111;afgekeurd\n").encode()
     out = parse_gld_compact_csv(payload, gld_bro_id="GLD000000000999", station_id="GMWX_T1", series_class="fully_assessed")
     assert len(out) == 2
     assert abs(out.iloc[0].obs_head_mnap - 7.123) < 1e-9
     assert out.iloc[0].station_id == "GMWX_T1"
+    assert list(out["assessment_status_raw"]) == ["goedgekeurd", "afgekeurd"]
+    assert list(out["assessment_status"]) == ["goedgekeurd", "afgekeurd"]
 
 
-def test_parse_gld_compact_csv_live_headerless_format():
+def test_parse_gld_compact_csv_live_headerless_format_preserves_all_statuses():
     payload = (
         ',,,,,\n'
         '"1975-02-28T12:00:00+01:00","6.550","goedgekeurd",,,"discontinu"\n'
-        '"1975-03-14T12:00:00+01:00","6.660","goedgekeurd",,,"discontinu"\n'
+        '"1975-03-14T12:00:00+01:00","6.660","afgekeurd",,,"discontinu"\n'
+        '"1975-03-28T12:00:00+01:00","6.700","onbeslist",,,"discontinu"\n'
         ',,,,,\n'
     ).encode()
     out = parse_gld_compact_csv(
         payload, gld_bro_id="GLD000000002815", station_id="GMW000000004104_T1", series_class="fully_assessed"
     )
-    assert len(out) == 2
+    assert len(out) == 3
     assert out.iloc[0]["obs_head_mnap"] == 6.55
     assert out.iloc[1]["obs_head_mnap"] == 6.66
     assert out.iloc[0]["date"] == pd.Timestamp("1975-02-28 12:00:00")
+    assert list(out["assessment_status"]) == ["goedgekeurd", "afgekeurd", "onbeslist"]
 
 
-def test_ingest_relational_join_cache_and_lineage(tmp_path):
+def test_parse_gld_compact_csv_does_not_assume_missing_status_is_approved():
+    payload = (
+        "tijdstip meting;waterstand\n"
+        "2024-01-01T12:00:00+01:00;7,10\n"
+        "2024-01-02T12:00:00+01:00;7,00\n"
+    ).encode()
+    out = parse_gld_compact_csv(
+        payload, gld_bro_id="GLD000000000999", station_id="GMWX_T1", series_class="fully_assessed"
+    )
+    assert len(out) == 2
+    assert out["assessment_status"].isna().all()
+    assert out["assessment_status_raw"].isna().all()
+
+
+def test_ingest_relational_join_cache_lineage_and_assessment_counts(tmp_path):
     gmw_fc = {"type":"FeatureCollection","features":[_feature("gw1", {
         "gm_gmw_pk": 10, "bro_id":"GMW000000000123", "ground_level_position":8.4,
         "quality_regime":"IMBRO", "nitg_code":"39A-TEST"
@@ -51,7 +69,9 @@ def test_ingest_relational_join_cache_and_lineage(tmp_path):
         "series_fully_assessed_csv_url":"https://example.test/gld999.csv",
         "series_preliminary_csv_url":"https://example.test/gld999-pre.csv"
     })], "links":[]}
-    gld_csv=("tijdstip meting;waterstand\n2024-01-01T12:00:00+01:00;7,10\n2024-01-02T12:00:00+01:00;7,00\n").encode()
+    gld_csv=("tijdstip meting;waterstand;status kwaliteitscontrole\n"
+             "2024-01-01T12:00:00+01:00;7,10;goedgekeurd\n"
+             "2024-01-02T12:00:00+01:00;7,00;afgekeurd\n").encode()
 
     calls=[]
     def transport(url, headers, timeout):
@@ -66,6 +86,8 @@ def test_ingest_relational_join_cache_and_lineage(tmp_path):
     r=ingest_bro_groundwater(tmp_path, cfg, transport=transport)
     assert r['manifest']['counts']['stations'] == 1
     assert len(r['observations']) == 2
+    assert r['manifest']['assessment_status_counts'] == {'goedgekeurd': 1, 'afgekeurd': 1}
+    assert list(r['observations']['assessment_status']) == ['goedgekeurd', 'afgekeurd']
     st=r['stations'].iloc[0]
     assert st['used_in_wdm'] == 'unknown'
     assert st['used_in_lhm_calibration'] == 'unknown'
