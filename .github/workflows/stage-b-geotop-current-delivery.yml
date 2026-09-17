@@ -1,0 +1,69 @@
+name: Stage-B GeoTOP current-delivery authority discovery
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/wdm_lhm/geotop_current_delivery_page_acquisition.py'
+      - 'src/wdm_lhm/geotop_current_delivery_page_acquisition_cli.py'
+      - 'tests/test_geotop_current_delivery_page_acquisition.py'
+      - 'docs/qualification/STAGE_B_GEOTOP_CODEBOOK_AUTHORITY_GATE3B_CHECKPOINT.md'
+      - '.github/workflows/stage-b-geotop-current-delivery.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  current-delivery-page:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Acquire one qualified official current-delivery page only
+        run: |
+          python -m wdm_lhm.geotop_current_delivery_page_acquisition_cli \
+            --output-dir stage_b_geotop_current_delivery
+      - name: Validate discovery-only boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('stage_b_geotop_current_delivery/geotop_current_delivery_page_manifest.json')
+          m = json.loads(p.read_text())
+          assert m['capability'] == 'STAGE_B_GEOTOP_161_CURRENT_DELIVERY_AUTHORITY_DISCOVERY'
+          assert m['state'] == 'OFFICIAL_CURRENT_DELIVERY_PAGE_ACQUIRED_LINKS_NOT_FOLLOWED'
+          assert m['request']['url'] == 'https://www.dinoloket.nl/bekijken-en-aanvragen-geotop'
+          assert m['request']['final_url'].startswith('https://')
+          g = m['guardrails']
+          assert g['single_gate2_discovered_url_only'] is True
+          assert g['official_redirect_only'] is True
+          assert g['links_followed'] is False
+          assert g['generic_web_search_performed'] is False
+          assert g['code_translation_performed'] is False
+          assert g['version_compatibility_established'] is False
+          assert g['geological_interpretation_performed'] is False
+          assert g['hydraulic_interpretation_performed'] is False
+          assert g['admission_decision_performed'] is False
+          print(json.dumps({
+              'final_url': m['request']['final_url'],
+              'sha256': m['response']['sha256'],
+              'marker_hits': m['marker_hits'],
+              'candidate_authority_links': m['candidate_authority_links'],
+          }, indent=2, sort_keys=True))
+          PY
+      - name: Upload raw current-delivery page evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-geotop-current-delivery-${{ github.run_id }}
+          path: stage_b_geotop_current_delivery/
+          retention-days: 14
+          if-no-files-found: error

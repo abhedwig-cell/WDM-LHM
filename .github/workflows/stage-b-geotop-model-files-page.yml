@@ -1,0 +1,70 @@
+name: Stage-B GeoTOP model-files authority discovery
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/wdm_lhm/geotop_model_files_page_acquisition.py'
+      - 'src/wdm_lhm/geotop_model_files_page_acquisition_cli.py'
+      - 'tests/test_geotop_model_files_page_acquisition.py'
+      - 'docs/qualification/STAGE_B_GEOTOP_CODEBOOK_AUTHORITY_GATE3C_CHECKPOINT.md'
+      - '.github/workflows/stage-b-geotop-model-files-page.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model-files-page:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Acquire exact official model-files page only
+        run: |
+          python -m wdm_lhm.geotop_model_files_page_acquisition_cli \
+            --output-dir stage_b_geotop_model_files_page
+      - name: Validate inspect-only boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('stage_b_geotop_model_files_page/geotop_model_files_page_manifest.json')
+          m = json.loads(p.read_text())
+          assert m['capability'] == 'STAGE_B_GEOTOP_161_MODEL_FILES_AUTHORITY_DISCOVERY'
+          assert m['state'] == 'OFFICIAL_MODEL_FILES_PAGE_ACQUIRED_NO_ACTIONS_INVOKED'
+          assert m['request']['url'] == 'https://www.dinoloket.nl/modelbestanden-aanvragen'
+          g = m['guardrails']
+          assert g['exact_gate3c_link_only'] is True
+          assert g['links_followed'] is False
+          assert g['forms_submitted'] is False
+          assert g['form_actions_invoked'] is False
+          assert g['generic_web_search_performed'] is False
+          assert g['code_translation_performed'] is False
+          assert g['version_compatibility_established'] is False
+          assert g['geological_interpretation_performed'] is False
+          assert g['hydraulic_interpretation_performed'] is False
+          assert g['admission_decision_performed'] is False
+          print(json.dumps({
+              'final_url': m['request']['final_url'],
+              'sha256': m['response']['sha256'],
+              'marker_hits': m['marker_hits'],
+              'candidate_authority_links': m['candidate_authority_links'],
+              'forms': m['forms'],
+          }, indent=2, sort_keys=True))
+          PY
+      - name: Upload raw model-files page evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-geotop-model-files-page-${{ github.run_id }}
+          path: stage_b_geotop_model_files_page/
+          retention-days: 14
+          if-no-files-found: error
