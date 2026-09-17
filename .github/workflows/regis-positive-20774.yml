@@ -1,0 +1,81 @@
+name: REGIS Stage-B positive case 20774 context
+
+on:
+  pull_request:
+    paths:
+      - "src/wdm_lhm/regis_positive_case_20774.py"
+      - "src/wdm_lhm/regis_positive_case_20774_cli.py"
+      - "tests/test_regis_positive_case_20774.py"
+      - "docs/qualification/STAGE_B_POSITIVE_20774_CHECKPOINT.md"
+      - ".github/workflows/regis-positive-20774.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  context:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Acquire four fixed REGIS context columns
+        run: |
+          python -m wdm_lhm.regis_positive_case_20774_cli acquire \
+            --output-dir output/stage_b_positive_20774/raw
+      - name: Parse raw columns without imputation
+        run: |
+          python -m wdm_lhm.regis_positive_case_20774_cli parse \
+            --raw-dir output/stage_b_positive_20774/raw \
+            --manifest output/stage_b_positive_20774/raw/regis_positive_20774_manifest.json \
+            --output output/stage_b_positive_20774/parsed.json
+      - name: Build geometry-only context
+        run: |
+          python -m wdm_lhm.regis_positive_case_20774_cli geometry \
+            --parsed output/stage_b_positive_20774/parsed.json \
+            --output output/stage_b_positive_20774/geometry.json
+      - name: Validate fail-closed boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path("output/stage_b_positive_20774")
+          manifest = json.loads((root / "raw/regis_positive_20774_manifest.json").read_text())
+          parsed = json.loads((root / "parsed.json").read_text())
+          geometry = json.loads((root / "geometry.json").read_text())
+
+          expected = {"20774_nominal", "20774_east", "20774_north", "20774_north_east"}
+          if {r["column_id"] for r in manifest["responses"]} != expected:
+              raise SystemExit("Positive-case column membership drift")
+          if manifest["variables"] != ["top", "bottom", "kh", "kv", "c"]:
+              raise SystemExit("REGIS variable boundary drift")
+          if set(parsed["columns"]) != expected:
+              raise SystemExit("Parsed column membership drift")
+          if parsed["missing_semantics"]["imputation_performed"]:
+              raise SystemExit("Missing-value imputation is forbidden")
+          boundary = geometry["scientific_boundary"]
+          if boundary["hydraulic_continuity_established"]:
+              raise SystemExit("Geometry-only workflow may not establish hydraulic continuity")
+          if boundary["admissible_freatic_assigned"]:
+              raise SystemExit("Context workflow may not assign ADMISSIBLE_FREATIC")
+          if geometry["comparison"]["columns_averaged"]:
+              raise SystemExit("Neighbouring REGIS columns may not be averaged")
+          print(json.dumps({"comparison": geometry["comparison"], "boundary": boundary}, indent=2))
+          PY
+      - name: Upload bounded context evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-positive-20774-${{ github.run_id }}
+          path: output/stage_b_positive_20774
+          if-no-files-found: error
+          retention-days: 14
