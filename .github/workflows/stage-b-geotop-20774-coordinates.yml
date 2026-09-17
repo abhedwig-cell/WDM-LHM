@@ -1,0 +1,69 @@
+name: Stage-B GeoTOP 20774 coordinate acquisition
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/wdm_lhm/geotop_coordinate_acquisition.py'
+      - 'src/wdm_lhm/geotop_coordinate_acquisition_cli.py'
+      - 'tests/test_geotop_coordinate_acquisition.py'
+      - '.github/workflows/stage-b-geotop-20774-coordinates.yml'
+      - 'docs/qualification/STAGE_B_GEOTOP_20774_CHECKPOINT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coordinate-acquisition:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Acquire raw GeoTOP coordinate axes only
+        run: |
+          python -m wdm_lhm.geotop_coordinate_acquisition_cli --output-dir stage_b_geotop_20774_coordinates
+      - name: Validate raw-only boundary
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('stage_b_geotop_20774_coordinates/geotop_coordinate_acquisition_manifest.json')
+          m = json.loads(p.read_text())
+          assert m['capability'] == 'STAGE_B_GEOTOP_20774_COORDINATE_ACQUISITION'
+          assert m['state'] == 'RAW_COORDINATE_AXES_ACQUIRED_NOT_PARSED'
+          assert m['request']['variables'] == ['x', 'y', 'z']
+          assert m['metadata_dependency']['dimensions'] == {'x': 2646, 'y': 2811, 'z': 313}
+          g = m['guardrails']
+          assert g['coordinate_values_requested'] is True
+          assert g['categorical_voxel_values_requested'] is False
+          assert g['strat_requested'] is False
+          assert g['lithok_requested'] is False
+          assert g['coordinate_axes_parsed'] is False
+          assert g['point_to_cell_mapping_performed'] is False
+          assert g['screen_correlation_performed'] is False
+          assert g['lithology_interpretation_performed'] is False
+          assert g['hydraulic_interpretation_performed'] is False
+          assert g['admission_decision_performed'] is False
+          assert g['allow_admissible_enabled'] is False
+          print({
+              'bytes': m['response']['bytes'],
+              'sha256': m['response']['sha256'],
+              'final_url': m['request']['final_url'],
+          })
+          PY
+      - name: Upload raw coordinate evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-b-geotop-20774-coordinates-${{ github.run_id }}
+          path: stage_b_geotop_20774_coordinates/
+          retention-days: 14
+          if-no-files-found: error
