@@ -135,7 +135,7 @@ def validate_das(text: str) -> dict:
     stripped = text.strip()
     if not stripped.startswith("Attributes {") or not stripped.endswith("}"):
         raise ValueError("GeoTOP DAS does not have expected Attributes envelope")
-    sections = sorted(set(re.findall(r"(?m)^\s{2}([A-Za-z_][A-Za-z0-9_]*)\s*\{", text)))
+    sections = sorted(set(re.findall(r"(?m)^\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{", text)))
     if not sections:
         raise ValueError("GeoTOP DAS contains no attribute sections")
     return {"attribute_sections": sections}

@@ -76,6 +76,12 @@ def test_missing_coordinate_fails_closed():
         parse_dds(DDS.replace("    Float64 z[z = 4];\n", ""))
 
 
+def test_das_accepts_standard_variable_indentation():
+    indented = DAS.replace("  x {", "    x {").replace("  y {", "    y {").replace("  z {", "    z {").replace("  strat {", "    strat {")
+    parsed = validate_das(indented)
+    assert {"x", "y", "z", "strat"}.issubset(parsed["attribute_sections"])
+
+
 def test_das_requires_attribute_sections():
     with pytest.raises(ValueError):
         validate_das("Attributes {\n}\n")
